@@ -189,9 +189,11 @@ export interface AppData {
   staff: Staff[]
   /** 忙しさ段階（可変・並び順=低→高） */
   busynessLevels: BusynessLevel[]
-  /** 未設定の日に適用する既定の忙しさ段階ID */
+  /** 未設定の「平日」に適用する既定の忙しさ段階ID */
   defaultBusynessLevelId: string
-  /** 日付 "yyyy-MM-dd" -> 忙しさ段階ID */
+  /** 未設定の「土日祝」に適用する既定の忙しさ段階ID */
+  weekendBusynessLevelId: string
+  /** 日付 "yyyy-MM-dd" -> 忙しさ段階ID（個別指定。既定より優先） */
   dayBusyness: Record<string, string>
   requirements: Requirement[]
   /** 特定日の必要人数の上書き */

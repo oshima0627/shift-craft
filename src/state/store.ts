@@ -81,7 +81,8 @@ function defaultData(): AppData {
     shifts: [s1, s2],
     staff,
     busynessLevels: levels,
-    defaultBusynessLevelId: 'busy_mid',
+    defaultBusynessLevelId: 'busy_mid', // 平日=普通
+    weekendBusynessLevelId: 'busy_high', // 土日祝=忙しい
     dayBusyness: {},
     requirements,
     overrides: [],
@@ -170,6 +171,13 @@ export function normalizeData(raw: unknown): AppData {
         busynessLevels[Math.floor(busynessLevels.length / 2)]?.id ??
         busynessLevels[0]?.id ??
         '')
+  // 土日祝の既定（無ければ最も忙しい＝最後の段階、または busy_high）
+  const weekendBusynessLevelId =
+    d.weekendBusynessLevelId && levelIds.has(d.weekendBusynessLevelId)
+      ? d.weekendBusynessLevelId
+      : (busynessLevels.find((l) => l.id === 'busy_high')?.id ??
+        busynessLevels[busynessLevels.length - 1]?.id ??
+        defaultBusynessLevelId)
 
   // 必要人数: 旧スキーマ（曜日区分キー）を忙しさ段階キーへ移行
   const requirements: Requirement[] = (d.requirements ?? base.requirements).map((r) =>
@@ -182,6 +190,7 @@ export function normalizeData(raw: unknown): AppData {
     staff,
     busynessLevels,
     defaultBusynessLevelId,
+    weekendBusynessLevelId,
     dayBusyness: d.dayBusyness ?? {},
     requirements,
     overrides: d.overrides ?? [],
@@ -238,6 +247,7 @@ interface StoreState {
   updateBusynessLevel: (id: string, patch: Partial<BusynessLevel>) => void
   removeBusynessLevel: (id: string) => void
   setDefaultBusynessLevel: (id: string) => void
+  setWeekendBusynessLevel: (id: string) => void
   setDayBusyness: (date: string, levelId: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
@@ -391,10 +401,12 @@ export const useStore = create<StoreState>()(
         set((s) => {
           if (s.data.busynessLevels.length <= 1) return s // 最低1段階は残す
           const levels = s.data.busynessLevels.filter((l) => l.id !== id)
-          const fallback =
-            s.data.defaultBusynessLevelId === id
-              ? levels[0].id
-              : s.data.defaultBusynessLevelId
+          const weekdayFallback =
+            s.data.defaultBusynessLevelId === id ? levels[0].id : s.data.defaultBusynessLevelId
+          const weekendFallback =
+            s.data.weekendBusynessLevelId === id
+              ? levels[levels.length - 1].id
+              : s.data.weekendBusynessLevelId
           // 削除段階を指す日付・必要人数の該当キーを掃除
           const dayBusyness: Record<string, string> = {}
           for (const [date, lid] of Object.entries(s.data.dayBusyness)) {
@@ -406,11 +418,20 @@ export const useStore = create<StoreState>()(
             return { ...r, counts }
           })
           return {
-            data: { ...s.data, busynessLevels: levels, defaultBusynessLevelId: fallback, dayBusyness, requirements },
+            data: {
+              ...s.data,
+              busynessLevels: levels,
+              defaultBusynessLevelId: weekdayFallback,
+              weekendBusynessLevelId: weekendFallback,
+              dayBusyness,
+              requirements,
+            },
           }
         }),
       setDefaultBusynessLevel: (id) =>
         set((s) => ({ data: { ...s.data, defaultBusynessLevelId: id } })),
+      setWeekendBusynessLevel: (id) =>
+        set((s) => ({ data: { ...s.data, weekendBusynessLevelId: id } })),
       setDayBusyness: (date, levelId) =>
         set((s) => ({
           data: { ...s.data, dayBusyness: { ...s.data.dayBusyness, [date]: levelId } },
