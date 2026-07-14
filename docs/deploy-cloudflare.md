@@ -7,7 +7,88 @@
                                                       └─ /api/settings ── D1 (settings / settings_history)
 ```
 
-## 前提
+デプロイ方法は2通りあります。どちらか一方でOKです。
+
+- **方法A: ブラウザだけで完結（Git連携・推奨）** → このすぐ下
+- **方法B: コマンドライン（wrangler CLI）** → 後半
+
+---
+
+# 方法A: ブラウザだけでデプロイ（Git連携）
+
+コマンド入力は不要です。GitHubリポジトリを接続すると、プッシュのたびに自動でビルド＆デプロイされます。
+
+## A-1. D1 データベースを作る
+
+1. https://dash.cloudflare.com にログイン
+2. 左メニュー **「ストレージとデータベース（Storage & Databases）」→「D1 SQL データベース」**
+3. **「データベースを作成（Create Database）」** → 名前に `shift-craft-db` と入力して作成
+4. 作成後の画面に表示される **データベースID（UUID）** をコピーしておく
+
+## A-2. `wrangler.jsonc` にデータベースIDを設定する
+
+GitHub のブラウザ編集で行えます:
+
+1. https://github.com/oshima0627/shift-craft を開き、対象ブランチを選択
+2. `wrangler.jsonc` を開いて鉛筆アイコン（Edit）をクリック
+3. `"database_id": "REPLACE_WITH_YOUR_DATABASE_ID"` の値を A-1 でコピーしたIDに置き換え
+4. 「Commit changes」で保存
+
+## A-3. テーブルを作る（SQLをコンソールで実行）
+
+1. D1 の `shift-craft-db` を開き **「コンソール（Console）」** タブへ
+2. 次のSQLを貼り付けて **実行（Execute）**:
+
+```sql
+CREATE TABLE IF NOT EXISTS settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  json TEXT NOT NULL,
+  saved_at TEXT NOT NULL
+);
+```
+
+3. 「Tables」に `settings` と `settings_history` が表示されればOK
+
+## A-4. Worker を Git 連携で作成する
+
+1. 左メニュー **「Workers & Pages」** → **「作成（Create）」** → **Workers** の **「リポジトリをインポート（Import a repository）」**
+2. **GitHubアカウントを接続** し、`oshima0627/shift-craft` を選択
+3. 設定画面で:
+   - プロジェクト名: `shift-craft`
+   - **ビルドコマンド**: `npm run build`
+   - **デプロイコマンド**: `npx wrangler deploy`（既定のままでOK）
+4. **「保存してデプロイ（Save and Deploy）」**
+5. ビルドが完了すると `https://shift-craft.<サブドメイン>.workers.dev` が発行される
+
+> 💡 デプロイ対象のブランチは、作成後に **プロジェクトの Settings → Build →
+> ブランチ設定** で変更できます（既定は main）。開発ブランチのままデプロイしたい
+> 場合はそこで指定してください。以後、そのブランチにプッシュするたびに自動デプロイされます。
+
+## A-5. Cloudflare Access で保護する（必須・ブラウザのみ）
+
+**この手順を飛ばすと、URLを知っている誰でも設定（スタッフ名・希望休など）を読み書きできてしまいます。**
+
+1. https://one.dash.cloudflare.com （Zero Trust）を開く。初回はチーム名を決める（**Freeプラン**でOK・50ユーザーまで無料）
+2. **「Access」→「アプリケーション（Applications）」→「アプリケーションを追加」→「セルフホスト（Self-hosted）」**
+3. アプリケーションドメインに Worker のドメインを入力: `shift-craft.<サブドメイン>.workers.dev`（パスは空 = サイト全体）
+4. ポリシー作成: アクション **Allow** / 含める条件 **Emails** に自分のメールアドレスを追加 → 保存
+5. 「Settings → Authentication」で **One-time PIN** が有効なことを確認（既定で有効）
+
+## A-6. 動作確認
+
+1. 本番URLを開く → メール認証（ワンタイムコード）→ アプリ表示
+2. 右上「⋯ データ」→「☁️ クラウドに保存」→ 保存日時が出ればOK
+3. 別ブラウザ（同じメールで認証）で「☁️ クラウドから読込」→ 同じ設定が復元される
+
+---
+
+# 方法B: コマンドライン（wrangler CLI）
 
 - Cloudflare アカウント（無料プランでOK）
 - Node.js 18+（このリポジトリを clone 済み）
