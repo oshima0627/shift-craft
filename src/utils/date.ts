@@ -1,5 +1,6 @@
 import { eachDayOfInterval, format, getDay, parseISO } from 'date-fns'
 import type { DayCategory, PeriodSettings } from '../types'
+import { isJapaneseHoliday } from './jpHolidays'
 
 export const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土']
 
@@ -22,11 +23,11 @@ export function enumerateDates(period: PeriodSettings): string[] {
 }
 
 /**
- * 日付の曜日区分を判定する。
+ * 日付の曜日区分を判定する。祝日は日本の祝日を自動判定する。
  * 優先度: 祝日 > 日 > 土 > 平日
  */
-export function dayCategoryOf(dateStr: string, holidays: string[]): DayCategory {
-  if (holidays.includes(dateStr)) return 'holiday'
+export function dayCategoryOf(dateStr: string): DayCategory {
+  if (isJapaneseHoliday(dateStr)) return 'holiday'
   const dow = getDay(parse(dateStr)) // 0=日, 6=土
   if (dow === 0) return 'sunday'
   if (dow === 6) return 'saturday'
@@ -45,6 +46,6 @@ export function displayDate(dateStr: string): string {
 }
 
 /** 土日祝かどうか */
-export function isRestDay(dateStr: string, holidays: string[]): boolean {
-  return dayCategoryOf(dateStr, holidays) !== 'weekday'
+export function isRestDay(dateStr: string): boolean {
+  return dayCategoryOf(dateStr) !== 'weekday'
 }

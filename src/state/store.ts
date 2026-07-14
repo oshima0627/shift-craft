@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { dayCategoryOf, enumerateDates } from '../utils/date'
 import type {
   AppData,
   BusynessLevel,
@@ -82,8 +81,6 @@ function defaultData(): AppData {
     shifts: [s1, s2],
     staff,
     busynessLevels: levels,
-    defaultBusynessLevelId: 'busy_mid', // 平日=普通
-    weekendBusynessLevelId: 'busy_high', // 土日祝=忙しい
     dayBusyness: {},
     requirements,
     overrides: [],
@@ -185,8 +182,6 @@ function sampleData(): AppData {
     shifts,
     staff,
     busynessLevels: levels,
-    defaultBusynessLevelId: 'busy_mid',
-    weekendBusynessLevelId: 'busy_high',
     dayBusyness: {},
     requirements,
     overrides: [],
@@ -259,22 +254,6 @@ export function normalizeData(raw: unknown): AppData {
     Array.isArray(d.busynessLevels) && d.busynessLevels.length > 0
       ? d.busynessLevels
       : base.busynessLevels
-  const levelIds = new Set(busynessLevels.map((l) => l.id))
-  const defaultBusynessLevelId =
-    d.defaultBusynessLevelId && levelIds.has(d.defaultBusynessLevelId)
-      ? d.defaultBusynessLevelId
-      : (busynessLevels.find((l) => l.id === 'busy_mid')?.id ??
-        busynessLevels[Math.floor(busynessLevels.length / 2)]?.id ??
-        busynessLevels[0]?.id ??
-        '')
-  // 土日祝の既定（無ければ最も忙しい＝最後の段階、または busy_high）
-  const weekendBusynessLevelId =
-    d.weekendBusynessLevelId && levelIds.has(d.weekendBusynessLevelId)
-      ? d.weekendBusynessLevelId
-      : (busynessLevels.find((l) => l.id === 'busy_high')?.id ??
-        busynessLevels[busynessLevels.length - 1]?.id ??
-        defaultBusynessLevelId)
-
   // 必要人数: 旧スキーマ（曜日区分キー）を忙しさ段階キーへ移行
   const requirements: Requirement[] = (d.requirements ?? base.requirements).map((r) =>
     migrateRequirementCounts(r, busynessLevels),
@@ -285,8 +264,6 @@ export function normalizeData(raw: unknown): AppData {
     shifts: d.shifts ?? base.shifts,
     staff,
     busynessLevels,
-    defaultBusynessLevelId,
-    weekendBusynessLevelId,
     dayBusyness: d.dayBusyness ?? {},
     requirements,
     overrides: d.overrides ?? [],
@@ -342,11 +319,7 @@ interface StoreState {
   addBusynessLevel: () => void
   updateBusynessLevel: (id: string, patch: Partial<BusynessLevel>) => void
   removeBusynessLevel: (id: string) => void
-  setDefaultBusynessLevel: (id: string) => void
-  setWeekendBusynessLevel: (id: string) => void
   setDayBusyness: (date: string, levelId: string) => void
-  /** 対象期間内の土日祝をすべて指定段階（既定=土日祝既定）にする */
-  setWeekendsToLevel: (levelId?: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
   // --- 特定日の上書き ---
@@ -500,12 +473,6 @@ export const useStore = create<StoreState>()(
         set((s) => {
           if (s.data.busynessLevels.length <= 1) return s // 最低1段階は残す
           const levels = s.data.busynessLevels.filter((l) => l.id !== id)
-          const weekdayFallback =
-            s.data.defaultBusynessLevelId === id ? levels[0].id : s.data.defaultBusynessLevelId
-          const weekendFallback =
-            s.data.weekendBusynessLevelId === id
-              ? levels[levels.length - 1].id
-              : s.data.weekendBusynessLevelId
           // 削除段階を指す日付・必要人数の該当キーを掃除
           const dayBusyness: Record<string, string> = {}
           for (const [date, lid] of Object.entries(s.data.dayBusyness)) {
@@ -517,20 +484,9 @@ export const useStore = create<StoreState>()(
             return { ...r, counts }
           })
           return {
-            data: {
-              ...s.data,
-              busynessLevels: levels,
-              defaultBusynessLevelId: weekdayFallback,
-              weekendBusynessLevelId: weekendFallback,
-              dayBusyness,
-              requirements,
-            },
+            data: { ...s.data, busynessLevels: levels, dayBusyness, requirements },
           }
         }),
-      setDefaultBusynessLevel: (id) =>
-        set((s) => ({ data: { ...s.data, defaultBusynessLevelId: id } })),
-      setWeekendBusynessLevel: (id) =>
-        set((s) => ({ data: { ...s.data, weekendBusynessLevelId: id } })),
       setDayBusyness: (date, levelId) =>
         set((s) => ({
           data: { ...s.data, dayBusyness: { ...s.data.dayBusyness, [date]: levelId } },
@@ -576,19 +532,6 @@ export const useStore = create<StoreState>()(
 
       updatePeriod: (patch) =>
         set((s) => ({ data: { ...s.data, period: { ...s.data.period, ...patch } } })),
-
-      setWeekendsToLevel: (levelId) =>
-        set((s) => {
-          const target = levelId ?? s.data.weekendBusynessLevelId
-          const dates = enumerateDates(s.data.period)
-          const dayBusyness = { ...s.data.dayBusyness }
-          for (const d of dates) {
-            if (dayCategoryOf(d, s.data.period.holidays) !== 'weekday') {
-              dayBusyness[d] = target
-            }
-          }
-          return { data: { ...s.data, dayBusyness } }
-        }),
 
       importData: (data) => set(() => ({ data: normalizeData(data) })),
       resetData: () => set(() => ({ data: defaultData() })),

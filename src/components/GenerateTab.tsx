@@ -66,25 +66,22 @@ export default function GenerateTab() {
 
       <div className="no-print card flex flex-wrap items-end gap-3">
         <div>
-          <label className="label">作成する期間（開始）</label>
+          <label className="label">作成する月</label>
           <input
-            type="date"
+            type="month"
             className="input"
-            value={data.period.start}
-            onChange={(e) => updatePeriod({ start: e.target.value })}
-          />
-        </div>
-        <div>
-          <label className="label">作成する期間（終了）</label>
-          <input
-            type="date"
-            className="input"
-            value={data.period.end}
-            onChange={(e) => updatePeriod({ end: e.target.value })}
+            value={data.period.start.slice(0, 7)}
+            onChange={(e) => {
+              const [y, m] = e.target.value.split('-').map(Number)
+              if (!y || !m) return
+              const pad = (n: number) => String(n).padStart(2, '0')
+              const end = new Date(y, m, 0).getDate() // その月の末日
+              updatePeriod({ start: `${y}-${pad(m)}-01`, end: `${y}-${pad(m)}-${pad(end)}` })
+            }}
           />
         </div>
         <div className="text-sm text-slate-500">
-          {dates.length}日間 / スタッフ {data.staff.length}名
+          {data.period.start} 〜 {data.period.end}（{dates.length}日間）/ スタッフ {data.staff.length}名
         </div>
       </div>
 

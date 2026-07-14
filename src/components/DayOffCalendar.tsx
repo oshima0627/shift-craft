@@ -30,7 +30,7 @@ export default function DayOffCalendar() {
   }, [staff, dates])
 
   const catClass = (date: string) => {
-    const cat = dayCategoryOf(date, period.holidays)
+    const cat = dayCategoryOf(date)
     if (cat === 'holiday' || cat === 'sunday') return 'text-red-500'
     if (cat === 'saturday') return 'text-blue-500'
     return 'text-slate-500'
@@ -108,7 +108,7 @@ export default function DayOffCalendar() {
                   </td>
                   {dates.map((date) => {
                     const off = offSet.has(date)
-                    const rest = dayCategoryOf(date, period.holidays) !== 'weekday'
+                    const rest = dayCategoryOf(date) !== 'weekday'
                     return (
                       <td
                         key={date}

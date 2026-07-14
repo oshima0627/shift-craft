@@ -35,8 +35,7 @@ function baseData(overrides: Partial<AppData> = {}): AppData {
     shifts: [{ id: 's1', name: '早番', start: '09:00', end: '17:00' }],
     staff: [],
     busynessLevels: LEVELS,
-    defaultBusynessLevelId: 'mid',
-    weekendBusynessLevelId: 'high',
+
     dayBusyness: {},
     requirements: [{ roleId: 'r1', shiftId: 's1', counts: flat(1) }],
     overrides: [],
