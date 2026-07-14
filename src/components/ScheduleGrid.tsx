@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { getDay } from 'date-fns'
 import type { AppData, Assignment, ScheduleResult } from '../types'
-import { dayCategoryOf, enumerateDates, parse } from '../utils/date'
-import { weekKeyOf } from '../utils/time'
+import { dayCategoryOf, enumerateDates, isRestDay, parse, weekdayLabel } from '../utils/date'
+import { busynessOf } from '../utils/busyness'
 
 interface Props {
   data: AppData
@@ -10,10 +9,9 @@ interface Props {
   onChange: (assignments: Assignment[]) => void
 }
 
-const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土']
-
 /**
- * スタッフ×日付のシフト表。横スクロールを避けるため「週ごと」に縦積みで表示する。
+ * シフト表。縦軸=従業員、横軸=日にちの1枚の表。
+ * 横に長い場合は表内で横スクロールする（スタッフ名列は固定）。
  * 各セルをクリックして手動調整でき、分割勤務（同日複数シフト）も表示・編集できる。
  */
 export default function ScheduleGrid({ data, result, onChange }: Props) {
@@ -30,129 +28,113 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
     onChange([...others, ...next])
   }
 
-  // 週（日曜起算）ごとに、日〜土の7列へ日付を配置する
-  const weekMap = new Map<string, (string | null)[]>()
-  for (const date of dates) {
-    const wk = weekKeyOf(date)
-    if (!weekMap.has(wk)) weekMap.set(wk, [null, null, null, null, null, null, null])
-    weekMap.get(wk)![getDay(parse(date))] = date
-  }
-  const weeks = [...weekMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-
   return (
-    <div className="space-y-4">
-      {weeks.map(([wk, days]) => (
-        <div key={wk} className="card">
-          <table className="w-full table-fixed border-collapse text-base">
-            <colgroup>
-              <col className="w-[8rem]" />
-              {days.map((_, i) => (
-                <col key={i} />
-              ))}
-              <col className="w-[3rem]" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th className="border-b border-slate-200 px-2 py-1.5 text-left text-sm text-slate-500">
-                  スタッフ
-                </th>
-                {days.map((date, i) => {
-                  const cat = date ? dayCategoryOf(date, data.period.holidays) : 'weekday'
-                  const color =
-                    i === 0 || cat === 'holiday' || cat === 'sunday'
+    <div className="card overflow-x-auto">
+      <table className="border-collapse text-sm">
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 border-b border-slate-200 bg-white px-2 py-1 text-left">
+              スタッフ
+            </th>
+            {dates.map((date) => {
+              const rest = isRestDay(date, data.period.holidays)
+              const cat = dayCategoryOf(date, data.period.holidays)
+              return (
+                <th
+                  key={date}
+                  className={`border-b border-slate-200 px-1 py-1 text-center font-semibold ${
+                    cat === 'holiday' || cat === 'sunday'
                       ? 'text-red-500'
-                      : i === 6 || cat === 'saturday'
+                      : cat === 'saturday'
                         ? 'text-blue-500'
                         : 'text-slate-500'
-                  return (
-                    <th
-                      key={i}
-                      className={`border-b border-l border-slate-200 px-1 py-1.5 text-center font-semibold ${color} ${date ? '' : 'bg-slate-50/50'}`}
-                    >
-                      <div className="text-sm">{date ? parse(date).getDate() : ''}</div>
-                      <div className="text-xs font-normal">{WEEKDAY_LABELS[i]}</div>
-                    </th>
-                  )
-                })}
-                <th className="border-b border-l border-slate-200 px-1 py-1.5 text-center text-sm text-slate-500">
-                  計
+                  } ${rest ? 'bg-slate-50' : ''}`}
+                >
+                  <div>{parse(date).getDate()}</div>
+                  <div className="text-[10px] font-normal">{weekdayLabel(date)}</div>
                 </th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.staff.map((st) => {
-                let weekTotal = 0
-                const rowCells = days.map((date, i) => {
-                  if (!date) {
-                    return (
-                      <td key={i} className="border-b border-l border-slate-100 bg-slate-50/40" />
-                    )
-                  }
-                  const cells = cellsOf(st.id, date)
-                  weekTotal += cells.length
-                  const unavailable = st.unavailableDates.includes(date)
-                  const rest = dayCategoryOf(date, data.period.holidays) !== 'weekday'
-                  return (
-                    <td
-                      key={i}
-                      onClick={() => setEditing({ staffId: st.id, date })}
-                      className={`h-14 cursor-pointer border-b border-l border-slate-100 p-1 text-center align-middle ${
-                        rest ? 'bg-slate-50/60' : ''
-                      } ${unavailable && cells.length === 0 ? 'bg-red-50' : ''} hover:ring-2 hover:ring-brand-400`}
-                      title={
-                        cells.length > 0
-                          ? cells
-                              .map(
-                                (a) =>
-                                  `${roleById.get(a.roleId)?.name ?? ''} / ${shiftById.get(a.shiftId)?.name ?? ''}`,
-                              )
-                              .join('、')
-                          : unavailable
-                            ? '希望休'
-                            : 'クリックで割り当て'
-                      }
-                    >
-                      {cells.length > 0 ? (
-                        <div className="flex flex-col items-stretch gap-0.5">
-                          {cells.map((a, idx) => {
-                            const role = roleById.get(a.roleId)
-                            const shift = shiftById.get(a.shiftId)
-                            return (
-                              <span
-                                key={idx}
-                                className="w-full truncate rounded px-1 py-0.5 text-xs font-semibold text-white"
-                                style={{ backgroundColor: role?.color ?? '#64748b' }}
-                              >
-                                {shift?.name ?? '○'}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      ) : unavailable ? (
-                        <span className="text-sm text-red-300">×</span>
-                      ) : (
-                        <span className="text-slate-200">·</span>
-                      )}
-                    </td>
-                  )
-                })
+              )
+            })}
+            <th className="border-b border-slate-200 px-2 py-1 text-center">計</th>
+          </tr>
+          {/* 忙しさの色 */}
+          <tr>
+            <th className="sticky left-0 z-10 bg-white px-2 py-0.5 text-right text-[10px] font-normal text-slate-400">
+              忙しさ
+            </th>
+            {dates.map((date) => {
+              const level = busynessOf(data, date)
+              return (
+                <th key={date} className="p-0">
+                  <div className="h-1.5 w-full" style={{ backgroundColor: level?.color }} title={level?.name} />
+                </th>
+              )
+            })}
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {data.staff.map((st) => (
+            <tr key={st.id} className="hover:bg-slate-50/50">
+              <td className="sticky left-0 z-10 whitespace-nowrap border-b border-slate-100 bg-white px-2 py-1 font-medium">
+                {st.name}
+                {st.level === 0 && <span className="ml-1 text-[10px] text-amber-500">新</span>}
+              </td>
+              {dates.map((date) => {
+                const cells = cellsOf(st.id, date)
+                const unavailable = st.unavailableDates.includes(date)
+                const rest = isRestDay(date, data.period.holidays)
                 return (
-                  <tr key={st.id} className="hover:bg-slate-50/50">
-                    <td className="border-b border-slate-100 px-2 py-1 font-medium">
-                      {st.name}
-                      {st.level === 0 && <span className="ml-1 text-xs text-amber-500">新</span>}
-                    </td>
-                    {rowCells}
-                    <td className="border-b border-l border-slate-100 px-1 py-1 text-center font-semibold text-slate-600">
-                      {weekTotal}
-                    </td>
-                  </tr>
+                  <td
+                    key={date}
+                    onClick={() => setEditing({ staffId: st.id, date })}
+                    className={`h-10 min-w-[2.75rem] cursor-pointer border-b border-l border-slate-100 p-0.5 text-center align-middle ${
+                      rest ? 'bg-slate-50/60' : ''
+                    } ${unavailable && cells.length === 0 ? 'bg-red-50' : ''} hover:ring-2 hover:ring-brand-400`}
+                    title={
+                      cells.length > 0
+                        ? cells
+                            .map(
+                              (a) =>
+                                `${roleById.get(a.roleId)?.name ?? ''} / ${shiftById.get(a.shiftId)?.name ?? ''}`,
+                            )
+                            .join('、')
+                        : unavailable
+                          ? '希望休'
+                          : 'クリックで割り当て'
+                    }
+                  >
+                    {cells.length > 0 ? (
+                      <div className="flex flex-col items-stretch gap-0.5">
+                        {cells.map((a, i) => {
+                          const role = roleById.get(a.roleId)
+                          const shift = shiftById.get(a.shiftId)
+                          return (
+                            <span
+                              key={i}
+                              className="w-full truncate rounded px-0.5 text-[10px] font-semibold text-white"
+                              style={{ backgroundColor: role?.color ?? '#64748b' }}
+                            >
+                              {shift?.name ?? '○'}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    ) : unavailable ? (
+                      <span className="text-[10px] text-red-300">×</span>
+                    ) : (
+                      <span className="text-slate-200">·</span>
+                    )}
+                  </td>
                 )
               })}
-            </tbody>
-          </table>
-        </div>
-      ))}
+              <td className="border-b border-l border-slate-100 px-2 py-1 text-center font-semibold text-slate-600">
+                {result.staffLoad[st.id] ?? 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {editing && (
         <CellEditor

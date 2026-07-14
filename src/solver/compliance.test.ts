@@ -46,6 +46,7 @@ function data(overrides: Partial<AppData> = {}): AppData {
       { id: 'high', name: '忙しい', color: '#e08a8a' },
     ],
     defaultBusynessLevelId: 'mid',
+    weekendBusynessLevelId: 'high',
     dayBusyness: {},
     requirements: [],
     overrides: [],

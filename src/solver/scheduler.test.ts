@@ -36,6 +36,7 @@ function baseData(overrides: Partial<AppData> = {}): AppData {
     staff: [],
     busynessLevels: LEVELS,
     defaultBusynessLevelId: 'mid',
+    weekendBusynessLevelId: 'high',
     dayBusyness: {},
     requirements: [{ roleId: 'r1', shiftId: 's1', counts: flat(1) }],
     overrides: [],
@@ -433,6 +434,21 @@ describe('generateSchedule', () => {
     const res = generateSchedule(data)
     // 週40h以内・週6日以内・法令エラーなしが守られること
     expect(res.warnings.filter((w) => w.kind === 'law' && w.severity === 'error')).toHaveLength(0)
+  })
+
+  it('既定の忙しさ: 平日は平日既定、土日は土日既定の人数が要求される', () => {
+    // 2026-08-01(土)=土日既定 high、2026-08-03(月)=平日既定 mid
+    const data = baseData({
+      period: { start: '2026-08-01', end: '2026-08-03', holidays: [] },
+      requirements: [{ roleId: 'r1', shiftId: 's1', counts: { low: 0, mid: 1, high: 3 } }],
+      staff: [staff('a'), staff('b'), staff('c'), staff('d')],
+    })
+    const res = generateSchedule(data)
+    const on = (d: string) => res.assignments.filter((x) => x.date === d).length
+    expect(on('2026-08-01')).toBe(3) // 土 → high=3
+    expect(on('2026-08-02')).toBe(3) // 日 → high=3
+    expect(on('2026-08-03')).toBe(1) // 月 → mid=1
+    expect(res.unfilled).toHaveLength(0)
   })
 
   it('preferSplitShifts ON: 人手に余裕があっても分割で回す', () => {
