@@ -13,7 +13,7 @@ const mkStaff = (id: string, name: string): Staff => ({
   maxConsecutive: null,
   weeklyMaxHours: null,
   weeklyMaxDays: null,
-  unavailableDates: [],
+  leaves: [],
   allowedShiftIds: [],
 })
 

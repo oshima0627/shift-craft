@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../state/store'
 import { EXPERIENCE_LABELS, type ExperienceLevel, type Staff } from '../types'
-import { displayDate } from '../utils/date'
 
 export default function StaffTab() {
   const staff = useStore((s) => s.data.staff)
@@ -52,7 +51,6 @@ function StaffRow({ staff }: { staff: Staff }) {
   const updateStaff = useStore((s) => s.updateStaff)
   const removeStaff = useStore((s) => s.removeStaff)
   const [open, setOpen] = useState(false)
-  const [dateInput, setDateInput] = useState('')
 
   const toggleRole = (roleId: string) => {
     const has = staff.roleIds.includes(roleId)
@@ -70,15 +68,6 @@ function StaffRow({ staff }: { staff: Staff }) {
     })
   }
 
-  const addUnavailable = () => {
-    if (!dateInput) return
-    if (!staff.unavailableDates.includes(dateInput)) {
-      updateStaff(staff.id, {
-        unavailableDates: [...staff.unavailableDates, dateInput].sort(),
-      })
-    }
-    setDateInput('')
-  }
 
   const levelColor =
     staff.level === 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
@@ -262,38 +251,11 @@ function StaffRow({ staff }: { staff: Staff }) {
           </div>
 
           <div className="sm:col-span-2">
-            <label className="label">出勤不可日・希望休</label>
-            <div className="mb-2 flex gap-2">
-              <input
-                type="date"
-                className="input flex-1"
-                value={dateInput}
-                onChange={(e) => setDateInput(e.target.value)}
-              />
-              <button className="btn-primary" onClick={addUnavailable}>
-                追加
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {staff.unavailableDates.map((d) => (
-                <span key={d} className="chip bg-red-50 text-red-600">
-                  {displayDate(d)}
-                  <button
-                    className="ml-1 text-red-400 hover:text-red-600"
-                    onClick={() =>
-                      updateStaff(staff.id, {
-                        unavailableDates: staff.unavailableDates.filter((x) => x !== d),
-                      })
-                    }
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              {staff.unavailableDates.length === 0 && (
-                <span className="text-xs text-slate-400">なし</span>
-              )}
-            </div>
+            <label className="label">希望休（全休・時間休）</label>
+            <p className="text-xs text-slate-500">
+              希望休は「希望休」タブのカレンダーで登録します（全休・午前休・午後休など）。
+              現在の登録数: {staff.leaves.length}件
+            </p>
           </div>
         </div>
       )}

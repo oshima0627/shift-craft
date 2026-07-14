@@ -5,6 +5,7 @@ import type {
   BusynessLevel,
   Constraints,
   CostSettings,
+  LeaveType,
   PeriodSettings,
   Requirement,
   RequirementOverride,
@@ -80,6 +81,7 @@ function defaultData(): AppData {
     roles: [r1, r2],
     shifts: [s1, s2],
     staff,
+    leaveTypes: defaultLeaveTypes(),
     busynessLevels: levels,
     dayBusyness: {},
     requirements,
@@ -95,6 +97,14 @@ function defaultBusynessLevels(): BusynessLevel[] {
     { id: 'busy_low', name: '暇', color: '#86c9a0' },
     { id: 'busy_mid', name: '普通', color: '#a7b3c2' },
     { id: 'busy_high', name: '忙しい', color: '#e08a8a' },
+  ]
+}
+
+function defaultLeaveTypes(): LeaveType[] {
+  return [
+    { id: 'leave_full', name: '全休', start: '00:00', end: '24:00' },
+    { id: 'leave_am', name: '午前休', start: '09:00', end: '15:00' },
+    { id: 'leave_pm', name: '午後休', start: '17:00', end: '21:00' },
   ]
 }
 
@@ -156,7 +166,11 @@ function sampleData(): AppData {
       maxConsecutive: 5,
       weeklyMaxHours: null,
       weeklyMaxDays: null,
-      unavailableDates: dayOff[name] ?? [],
+      // サンプルは一部を全休、一部を時間休にして分かりやすく
+      leaves: (dayOff[name] ?? []).map((d, i) => ({
+        date: d,
+        typeId: i % 3 === 1 ? 'leave_am' : i % 3 === 2 ? 'leave_pm' : 'leave_full',
+      })),
       allowedShiftIds: [],
     }
   })
@@ -181,6 +195,7 @@ function sampleData(): AppData {
     roles,
     shifts,
     staff,
+    leaveTypes: defaultLeaveTypes(),
     busynessLevels: levels,
     dayBusyness: {},
     requirements,
@@ -210,7 +225,7 @@ function mkStaff(
     maxConsecutive: 5,
     weeklyMaxHours: null,
     weeklyMaxDays: null,
-    unavailableDates: [],
+    leaves: [],
     allowedShiftIds: [],
     ...extra,
   }
@@ -241,13 +256,24 @@ export function normalizeData(raw: unknown): AppData {
     customRules: d.constraints?.customRules ?? [],
   }
   const cost: CostSettings = { ...defaultCost(), ...(d.cost ?? {}) }
-  const staff: Staff[] = (d.staff ?? base.staff).map((s) => ({
-    ...s,
-    hourlyWage: s.hourlyWage ?? 1100,
-    isMinor: s.isMinor ?? false,
-    weeklyMaxHours: s.weeklyMaxHours ?? null,
-    weeklyMaxDays: s.weeklyMaxDays ?? null,
-  }))
+  // 休みの種類（無ければ既定）
+  const leaveTypes: LeaveType[] =
+    Array.isArray(d.leaveTypes) && d.leaveTypes.length > 0 ? d.leaveTypes : defaultLeaveTypes()
+  const staff: Staff[] = (d.staff ?? base.staff).map((s) => {
+    // 旧スキーマ unavailableDates（全休の配列）を leaves へ移行
+    const legacy = (s as unknown as { unavailableDates?: string[] }).unavailableDates
+    const leaves =
+      s.leaves ??
+      (Array.isArray(legacy) ? legacy.map((date) => ({ date, typeId: 'leave_full' })) : [])
+    return {
+      ...s,
+      hourlyWage: s.hourlyWage ?? 1100,
+      isMinor: s.isMinor ?? false,
+      weeklyMaxHours: s.weeklyMaxHours ?? null,
+      weeklyMaxDays: s.weeklyMaxDays ?? null,
+      leaves,
+    }
+  })
 
   // 忙しさ段階（無ければ既定3段階を補完）
   const busynessLevels: BusynessLevel[] =
@@ -263,6 +289,7 @@ export function normalizeData(raw: unknown): AppData {
     roles: d.roles ?? base.roles,
     shifts: d.shifts ?? base.shifts,
     staff,
+    leaveTypes,
     busynessLevels,
     dayBusyness: d.dayBusyness ?? {},
     requirements,
@@ -313,8 +340,12 @@ interface StoreState {
   addStaff: (name: string) => void
   updateStaff: (id: string, patch: Partial<Staff>) => void
   removeStaff: (id: string) => void
-  /** 希望休（出勤不可日）の1日分をトグルする */
-  toggleUnavailable: (staffId: string, date: string) => void
+  /** スタッフの休み希望を設定する（typeId=null で解除） */
+  setStaffLeave: (staffId: string, date: string, typeId: string | null) => void
+  // --- 休みの種類（全休・時間休） ---
+  addLeaveType: () => void
+  updateLeaveType: (id: string, patch: Partial<LeaveType>) => void
+  removeLeaveType: (id: string) => void
   // --- 忙しさ段階 ---
   addBusynessLevel: () => void
   updateBusynessLevel: (id: string, patch: Partial<BusynessLevel>) => void
@@ -407,7 +438,7 @@ export const useStore = create<StoreState>()(
                 maxConsecutive: 5,
                 weeklyMaxHours: null,
                 weeklyMaxDays: null,
-                unavailableDates: [],
+                leaves: [],
                 allowedShiftIds: [],
               },
             ],
@@ -434,22 +465,53 @@ export const useStore = create<StoreState>()(
           },
         })),
 
-      toggleUnavailable: (staffId, date) =>
+      setStaffLeave: (staffId, date, typeId) =>
         set((s) => ({
           data: {
             ...s.data,
             staff: s.data.staff.map((st) => {
               if (st.id !== staffId) return st
-              const has = st.unavailableDates.includes(date)
-              return {
-                ...st,
-                unavailableDates: has
-                  ? st.unavailableDates.filter((d) => d !== date)
-                  : [...st.unavailableDates, date].sort(),
-              }
+              const others = st.leaves.filter((l) => l.date !== date)
+              const leaves = typeId
+                ? [...others, { date, typeId }].sort((a, b) => a.date.localeCompare(b.date))
+                : others
+              return { ...st, leaves }
             }),
           },
         })),
+
+      addLeaveType: () =>
+        set((s) => ({
+          data: {
+            ...s.data,
+            leaveTypes: [
+              ...s.data.leaveTypes,
+              { id: newId('leave'), name: `休み${s.data.leaveTypes.length + 1}`, start: '09:00', end: '13:00' },
+            ],
+          },
+        })),
+      updateLeaveType: (id, patch) =>
+        set((s) => ({
+          data: {
+            ...s.data,
+            leaveTypes: s.data.leaveTypes.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+          },
+        })),
+      removeLeaveType: (id) =>
+        set((s) => {
+          if (s.data.leaveTypes.length <= 1) return s
+          return {
+            data: {
+              ...s.data,
+              leaveTypes: s.data.leaveTypes.filter((t) => t.id !== id),
+              // その種類を指す休みを除去
+              staff: s.data.staff.map((st) => ({
+                ...st,
+                leaves: st.leaves.filter((l) => l.typeId !== id),
+              })),
+            },
+          }
+        }),
 
       addBusynessLevel: () =>
         set((s) => {

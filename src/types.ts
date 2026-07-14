@@ -48,6 +48,25 @@ export interface ShiftType {
   end: string
 }
 
+/**
+ * 休みの種類（可変）。全休のほか、時間休（午前休・午後休など）を定義できる。
+ * その時間帯に重なるシフトには割り当てられない。全休は 00:00〜24:00。
+ */
+export interface LeaveType {
+  id: string
+  name: string
+  /** "HH:mm" 全休は '00:00' */
+  start: string
+  /** "HH:mm" 全休は '24:00' */
+  end: string
+}
+
+/** スタッフの休み希望（日付＋休みの種類） */
+export interface StaffLeave {
+  date: string // "yyyy-MM-dd"
+  typeId: string
+}
+
 /** スタッフ */
 export interface Staff {
   id: string
@@ -67,8 +86,8 @@ export interface Staff {
   weeklyMaxHours: number | null
   /** 週の出勤日数上限。null=法定（週1休＝最大6日）に従う */
   weeklyMaxDays: number | null
-  /** 出勤不可日・希望休 "yyyy-MM-dd" */
-  unavailableDates: string[]
+  /** 休み希望（全休・時間休）。その時間に重なるシフトには入れない */
+  leaves: StaffLeave[]
   /** 割り当て可能なシフト時間帯ID。空=すべて可 */
   allowedShiftIds: string[]
 }
@@ -187,6 +206,8 @@ export interface AppData {
   roles: Role[]
   shifts: ShiftType[]
   staff: Staff[]
+  /** 休みの種類（全休・時間休） */
+  leaveTypes: LeaveType[]
   /** 忙しさ段階（可変・並び順=低→高） */
   busynessLevels: BusynessLevel[]
   /**
