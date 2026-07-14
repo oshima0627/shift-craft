@@ -6,6 +6,9 @@
   html {
     /* PCが苦手な人でも読みやすいよう、全体の基準文字サイズを大きめに */
     font-size: 17px;
+    /* 画面ごとに縦スクロールバーの有無が変わってもビューポート幅が一定になり、
+       中央寄せのヘッダーが左右にずれないよう、スクロールバー分の余白を常に確保する */
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-slate-100 text-slate-800 antialiased;
