@@ -7,7 +7,7 @@ import {
   logout as apiLogout,
   pullCloudIntoStore,
   pushCloudIfChanged,
-  setupPassword,
+  setupAccount,
 } from '../utils/cloud'
 
 type Phase = 'loading' | 'setup' | 'login' | 'ready' | 'local'
@@ -121,9 +121,10 @@ function AuthCard({
   title: string
   desc: string
   buttonLabel: string
-  onSubmit: (password: string) => Promise<{ ok: boolean; error?: string }>
+  onSubmit: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>
   confirm?: boolean
 }) {
+  const [id, setId] = useState('')
   const [pw, setPw] = useState('')
   const [pw2, setPw2] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -133,6 +134,10 @@ function AuthCard({
 
   const submit = async () => {
     setError(null)
+    if (id.trim().length < 1) {
+      setError('IDを入力してください。')
+      return
+    }
     if (pw.length < 4) {
       setError('パスワードは4文字以上にしてください。')
       return
@@ -142,15 +147,17 @@ function AuthCard({
       return
     }
     setBusy(true)
-    const res = await onSubmit(pw)
+    const res = await onSubmit(id.trim(), pw)
     setBusy(false)
     if (!res.ok) {
       setError(
         res.error === 'invalid_credentials'
-          ? 'パスワードが違います。'
+          ? 'IDまたはパスワードが違います。'
           : res.error === 'weak_password'
             ? 'パスワードは4文字以上にしてください。'
-            : 'エラーが発生しました。通信状況を確認してください。',
+            : res.error === 'invalid_username'
+              ? 'IDを入力してください。'
+              : 'エラーが発生しました。通信状況を確認してください。',
       )
     }
   }
@@ -167,7 +174,17 @@ function AuthCard({
         <div className="space-y-3">
           <input
             ref={ref}
+            type="text"
+            autoComplete="username"
+            className="input"
+            placeholder="ID（ユーザー名）"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+          <input
             type="password"
+            autoComplete={confirm ? 'new-password' : 'current-password'}
             className="input"
             placeholder="パスワード"
             value={pw}
@@ -177,6 +194,7 @@ function AuthCard({
           {confirm && (
             <input
               type="password"
+              autoComplete="new-password"
               className="input"
               placeholder="パスワード（確認）"
               value={pw2}
@@ -197,12 +215,12 @@ function AuthCard({
 function SetupScreen({ onDone }: { onDone: () => void }) {
   return (
     <AuthCard
-      title="初回パスワード設定"
-      desc="このシフト表を守るためのパスワードを設定します。次回以降はこのパスワードでログインします。"
-      buttonLabel="設定してはじめる"
+      title="初回アカウント作成"
+      desc="このシフト表を守るためのID（ユーザー名）とパスワードを設定します。次回以降はこのID＋パスワードでログインします。"
+      buttonLabel="作成してはじめる"
       confirm
-      onSubmit={async (pw) => {
-        const res = await setupPassword(pw)
+      onSubmit={async (id, pw) => {
+        const res = await setupAccount(id, pw)
         if (res.ok) await onDone()
         return res
       }}
@@ -214,10 +232,10 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
   return (
     <AuthCard
       title="ログイン"
-      desc="パスワードを入力してください。"
+      desc="IDとパスワードを入力してください。"
       buttonLabel="ログイン"
-      onSubmit={async (pw) => {
-        const res = await apiLogin(pw)
+      onSubmit={async (id, pw) => {
+        const res = await apiLogin(id, pw)
         if (res.ok) await onDone()
         return res
       }}

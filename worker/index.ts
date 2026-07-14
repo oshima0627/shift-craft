@@ -42,9 +42,9 @@ interface SettingsRow {
   json: string
   updated_at: string
 }
-interface AuthRow {
+interface UserRow {
+  username: string
   password_hash: string
-  session_secret: string
 }
 
 // ---------- 共通ユーティリティ ----------
@@ -112,24 +112,28 @@ async function hmac(secret: string, msg: string): Promise<string> {
   return b64(new Uint8Array(sig))
 }
 
-async function signSession(secret: string): Promise<string> {
-  const payload = b64(enc.encode(JSON.stringify({ exp: Date.now() + SESSION_TTL_MS })))
+async function signSession(secret: string, username: string): Promise<string> {
+  const payload = b64(
+    enc.encode(JSON.stringify({ exp: Date.now() + SESSION_TTL_MS, sub: username })),
+  )
   const sig = await hmac(secret, payload)
   return `${payload}.${sig}`
 }
 
-async function verifySessionToken(token: string, secret: string): Promise<boolean> {
+/** 有効ならユーザー名を返す。無効なら null */
+async function verifySessionToken(token: string, secret: string): Promise<string | null> {
   const dot = token.indexOf('.')
-  if (dot < 0) return false
+  if (dot < 0) return null
   const payload = token.slice(0, dot)
   const sig = token.slice(dot + 1)
   const expected = await hmac(secret, payload)
-  if (!timingSafeEqual(sig, expected)) return false
+  if (!timingSafeEqual(sig, expected)) return null
   try {
-    const { exp } = JSON.parse(dec.decode(fromB64(payload))) as { exp: number }
-    return typeof exp === 'number' && Date.now() < exp
+    const { exp, sub } = JSON.parse(dec.decode(fromB64(payload))) as { exp: number; sub: string }
+    if (typeof exp !== 'number' || Date.now() >= exp) return null
+    return typeof sub === 'string' ? sub : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -166,27 +170,64 @@ async function ensureSchema(db: D1Database): Promise<void> {
          id INTEGER PRIMARY KEY AUTOINCREMENT, json TEXT NOT NULL, saved_at TEXT NOT NULL)`,
     )
     .run()
+  // ユーザー（ID＋パスワード）。複数アカウント可
   await db
     .prepare(
-      `CREATE TABLE IF NOT EXISTS auth (
-         id INTEGER PRIMARY KEY CHECK (id = 1),
-         password_hash TEXT NOT NULL, session_secret TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+      `CREATE TABLE IF NOT EXISTS users (
+         username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    )
+    .run()
+  // セッション署名用の共有シークレット（単一行）
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS auth_meta (
+         id INTEGER PRIMARY KEY CHECK (id = 1), session_secret TEXT NOT NULL)`,
     )
     .run()
 }
 
-async function getAuth(db: D1Database): Promise<AuthRow | null> {
-  return db
-    .prepare('SELECT password_hash, session_secret FROM auth WHERE id = 1')
-    .first<AuthRow>()
+async function getSessionSecret(db: D1Database): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT session_secret FROM auth_meta WHERE id = 1')
+    .first<{ session_secret: string }>()
+  return row?.session_secret ?? null
 }
 
-/** リクエストが有効なセッションを持つか */
-async function isAuthenticated(request: Request, auth: AuthRow | null): Promise<boolean> {
-  if (!auth) return false
+/** セッションシークレットを取得（無ければ生成して保存） */
+async function ensureSessionSecret(db: D1Database): Promise<string> {
+  const existing = await getSessionSecret(db)
+  if (existing) return existing
+  const secret = b64(crypto.getRandomValues(new Uint8Array(32)))
+  await db
+    .prepare('INSERT OR IGNORE INTO auth_meta (id, session_secret) VALUES (1, ?1)')
+    .bind(secret)
+    .run()
+  return (await getSessionSecret(db)) ?? secret
+}
+
+async function countUsers(db: D1Database): Promise<number> {
+  const row = await db.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>()
+  return row?.n ?? 0
+}
+
+async function getUser(db: D1Database, username: string): Promise<UserRow | null> {
+  return db
+    .prepare('SELECT username, password_hash FROM users WHERE username = ?1')
+    .bind(username)
+    .first<UserRow>()
+}
+
+/** リクエストが有効なセッションを持つか（ユーザー名 or null） */
+async function authedUser(request: Request, db: D1Database): Promise<string | null> {
   const token = readCookie(request, SESSION_COOKIE)
-  if (!token) return false
-  return verifySessionToken(token, auth.session_secret)
+  if (!token) return null
+  const secret = await getSessionSecret(db)
+  if (!secret) return null
+  return verifySessionToken(token, secret)
+}
+
+function normalizeUsername(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : ''
 }
 
 // ---------- APIハンドラ ----------
@@ -195,38 +236,41 @@ export async function handleApi(request: Request, db: D1Database): Promise<Respo
   await ensureSchema(db)
   const url = new URL(request.url)
   const path = url.pathname
-  const auth = await getAuth(db)
 
-  // ---- 認証エンドポイント ----
+  // ---- 認証エンドポイント（ID＋パスワード） ----
   if (path === '/api/auth/status' && request.method === 'GET') {
-    return json({ configured: !!auth, authenticated: await isAuthenticated(request, auth) })
+    const configured = (await countUsers(db)) > 0
+    const user = await authedUser(request, db)
+    return json({ configured, authenticated: !!user, username: user ?? undefined })
   }
 
   if (path === '/api/auth/setup' && request.method === 'POST') {
-    if (auth) return json({ error: 'already_configured' }, 409)
-    const body = await readJson<{ password?: string }>(request)
+    // 最初のアカウント作成（ユーザーが1人も居ないときのみ）
+    if ((await countUsers(db)) > 0) return json({ error: 'already_configured' }, 409)
+    const body = await readJson<{ username?: string; password?: string }>(request)
+    const username = normalizeUsername(body?.username)
     const password = (body?.password ?? '').trim()
+    if (username.length < 1) return json({ error: 'invalid_username' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
-    const password_hash = await hashPassword(password)
-    const session_secret = b64(crypto.getRandomValues(new Uint8Array(32)))
+    const secret = await ensureSessionSecret(db)
     await db
-      .prepare(
-        'INSERT INTO auth (id, password_hash, session_secret, updated_at) VALUES (1, ?1, ?2, ?3)',
-      )
-      .bind(password_hash, session_secret, new Date().toISOString())
+      .prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)')
+      .bind(username, await hashPassword(password), new Date().toISOString())
       .run()
-    const token = await signSession(session_secret)
+    const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
   }
 
   if (path === '/api/auth/login' && request.method === 'POST') {
-    if (!auth) return json({ error: 'not_configured' }, 400)
-    const body = await readJson<{ password?: string }>(request)
+    if ((await countUsers(db)) === 0) return json({ error: 'not_configured' }, 400)
+    const body = await readJson<{ username?: string; password?: string }>(request)
+    const username = normalizeUsername(body?.username)
     const password = body?.password ?? ''
-    if (!(await verifyPassword(password, auth.password_hash))) {
-      return json({ error: 'invalid_credentials' }, 401)
-    }
-    const token = await signSession(auth.session_secret)
+    const user = await getUser(db, username)
+    const ok = user ? await verifyPassword(password, user.password_hash) : false
+    if (!ok) return json({ error: 'invalid_credentials' }, 401)
+    const secret = await ensureSessionSecret(db)
+    const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
   }
 
@@ -235,8 +279,24 @@ export async function handleApi(request: Request, db: D1Database): Promise<Respo
   }
 
   // ---- ここから先は要ログイン ----
-  if (!(await isAuthenticated(request, auth))) {
+  const currentUser = await authedUser(request, db)
+  if (!currentUser) {
     return json({ error: 'unauthorized' }, 401)
+  }
+
+  // ログイン中ユーザーが別アカウントを追加できる
+  if (path === '/api/auth/register' && request.method === 'POST') {
+    const body = await readJson<{ username?: string; password?: string }>(request)
+    const username = normalizeUsername(body?.username)
+    const password = (body?.password ?? '').trim()
+    if (username.length < 1) return json({ error: 'invalid_username' }, 400)
+    if (password.length < 4) return json({ error: 'weak_password' }, 400)
+    if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
+    await db
+      .prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)')
+      .bind(username, await hashPassword(password), new Date().toISOString())
+      .run()
+    return json({ ok: true })
   }
 
   if (path === '/api/settings' && request.method === 'GET') {

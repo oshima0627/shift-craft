@@ -5,11 +5,12 @@ import {
   fetchCloud,
   formatSyncTime,
   getLastSyncedAt,
+  registerAccount,
   saveCloud,
   setLastSyncedAt,
 } from '../utils/cloud'
 
-export default function DataMenu() {
+export default function DataMenu({ authed = false }: { authed?: boolean }) {
   const data = useStore((s) => s.data)
   const importData = useStore((s) => s.importData)
   const resetData = useStore((s) => s.resetData)
@@ -17,6 +18,21 @@ export default function DataMenu() {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleAddAccount = async () => {
+    const username = prompt('追加するアカウントのID（ユーザー名）を入力してください')
+    if (!username || !username.trim()) return
+    const password = prompt('そのアカウントのパスワード（4文字以上）を入力してください')
+    if (!password || password.length < 4) {
+      alert('パスワードは4文字以上にしてください。')
+      return
+    }
+    const res = await registerAccount(username.trim(), password)
+    if (res.ok) alert(`アカウント「${username.trim()}」を追加しました。このID＋パスワードでログインできます。`)
+    else if (res.error === 'username_taken') alert('そのIDは既に使われています。')
+    else alert('追加に失敗しました。')
+    setOpen(false)
+  }
 
   const cloudUnavailableMsg =
     'クラウドに接続できませんでした。Cloudflareにデプロイした本番URLで開いているか確認してください（ローカル開発ではクラウド保存は使えません）。'
@@ -144,6 +160,17 @@ export default function DataMenu() {
             >
               ⬆️ 設定をインポート
             </button>
+            {authed && (
+              <>
+                <div className="my-1 border-t border-slate-100" />
+                <button
+                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100"
+                  onClick={handleAddAccount}
+                >
+                  👤 アカウントを追加
+                </button>
+              </>
+            )}
             <div className="my-1 border-t border-slate-100" />
             <button
               className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100"

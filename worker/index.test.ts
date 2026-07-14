@@ -6,7 +6,8 @@ import { handleApi, type D1Database, type D1PreparedStatement } from './index'
  */
 function fakeDb() {
   let settings: { json: string; updated_at: string } | null = null
-  let auth: { password_hash: string; session_secret: string } | null = null
+  let meta: { session_secret: string } | null = null
+  const users = new Map<string, { username: string; password_hash: string }>()
   let history: { id: number; json: string; saved_at: string }[] = []
   let seq = 0
 
@@ -22,8 +23,15 @@ function fakeDb() {
           if (query.includes('FROM settings WHERE id = 1')) {
             return (settings ? { ...settings } : null) as T | null
           }
-          if (query.includes('FROM auth WHERE id = 1')) {
-            return (auth ? { ...auth } : null) as T | null
+          if (query.includes('FROM auth_meta WHERE id = 1')) {
+            return (meta ? { ...meta } : null) as T | null
+          }
+          if (query.includes('COUNT(*) AS n FROM users')) {
+            return { n: users.size } as T
+          }
+          if (query.includes('FROM users WHERE username')) {
+            const u = users.get(bound[0] as string)
+            return (u ? { ...u } : null) as T | null
           }
           throw new Error(`unexpected first(): ${query}`)
         },
@@ -41,8 +49,15 @@ function fakeDb() {
             history = history.slice(-(bound[0] as number))
             return
           }
-          if (query.startsWith('INSERT INTO auth')) {
-            auth = { password_hash: bound[0] as string, session_secret: bound[1] as string }
+          if (query.includes('INTO auth_meta')) {
+            if (!meta) meta = { session_secret: bound[0] as string }
+            return
+          }
+          if (query.startsWith('INSERT INTO users')) {
+            users.set(bound[0] as string, {
+              username: bound[0] as string,
+              password_hash: bound[1] as string,
+            })
             return
           }
           throw new Error(`unexpected run(): ${query}`)
@@ -66,6 +81,7 @@ function fakeDb() {
 }
 
 const APP_DATA = { roles: [], staff: [], shifts: [] }
+const USER = 'tencho'
 const PW = 'pass1234'
 
 function req(path: string, method: string, body?: unknown, cookie?: string): Request {
@@ -80,58 +96,66 @@ function req(path: string, method: string, body?: unknown, cookie?: string): Req
 }
 
 function cookieFrom(res: Response): string {
-  const sc = res.headers.get('set-cookie') ?? ''
-  return sc.split(';')[0] // "sc_session=..."
+  return (res.headers.get('set-cookie') ?? '').split(';')[0]
 }
 
-/** setup 済み・ログイン済みの (db, cookie) を返す */
 async function authed() {
   const db = fakeDb()
-  const res = await handleApi(req('/api/auth/setup', 'POST', { password: PW }), db)
+  const res = await handleApi(req('/api/auth/setup', 'POST', { username: USER, password: PW }), db)
   expect(res.status).toBe(200)
   return { db, cookie: cookieFrom(res) }
 }
 
-describe('worker 認証', () => {
+describe('worker 認証（ID＋パスワード）', () => {
   it('初期状態は未設定・未認証', async () => {
     const db = fakeDb()
     const res = await handleApi(req('/api/auth/status', 'GET'), db)
-    const body = (await res.json()) as { configured: boolean; authenticated: boolean }
-    expect(body).toEqual({ configured: false, authenticated: false })
+    expect(await res.json()).toMatchObject({ configured: false, authenticated: false })
   })
 
-  it('初回セットアップでパスワード設定＆セッション発行', async () => {
+  it('初回セットアップでアカウント作成＆セッション発行', async () => {
     const db = fakeDb()
-    const res = await handleApi(req('/api/auth/setup', 'POST', { password: PW }), db)
+    const res = await handleApi(req('/api/auth/setup', 'POST', { username: USER, password: PW }), db)
     expect(res.status).toBe(200)
     expect(res.headers.get('set-cookie')).toContain('sc_session=')
-    const cookie = cookieFrom(res)
-    const status = await handleApi(req('/api/auth/status', 'GET', undefined, cookie), db)
-    expect(await status.json()).toEqual({ configured: true, authenticated: true })
+    const status = await handleApi(req('/api/auth/status', 'GET', undefined, cookieFrom(res)), db)
+    expect(await status.json()).toMatchObject({ configured: true, authenticated: true, username: USER })
+  })
+
+  it('ID未入力は拒否', async () => {
+    const db = fakeDb()
+    const res = await handleApi(req('/api/auth/setup', 'POST', { username: '', password: PW }), db)
+    expect(res.status).toBe(400)
   })
 
   it('短すぎるパスワードは拒否', async () => {
     const db = fakeDb()
-    const res = await handleApi(req('/api/auth/setup', 'POST', { password: '12' }), db)
+    const res = await handleApi(req('/api/auth/setup', 'POST', { username: USER, password: '12' }), db)
     expect(res.status).toBe(400)
   })
 
   it('設定済みなら再セットアップ不可', async () => {
     const { db } = await authed()
-    const res = await handleApi(req('/api/auth/setup', 'POST', { password: 'other123' }), db)
+    const res = await handleApi(req('/api/auth/setup', 'POST', { username: 'x', password: 'yyyy' }), db)
     expect(res.status).toBe(409)
   })
 
-  it('正しいパスワードでログインできる', async () => {
+  it('正しいID＋パスワードでログイン', async () => {
     const { db } = await authed()
-    const res = await handleApi(req('/api/auth/login', 'POST', { password: PW }), db)
+    const res = await handleApi(req('/api/auth/login', 'POST', { username: USER, password: PW }), db)
     expect(res.status).toBe(200)
     expect(res.headers.get('set-cookie')).toContain('sc_session=')
   })
 
   it('誤ったパスワードは401', async () => {
     const { db } = await authed()
-    const res = await handleApi(req('/api/auth/login', 'POST', { password: 'wrong' }), db)
+    const res = await handleApi(req('/api/auth/login', 'POST', { username: USER, password: 'wrong' }), db)
+    expect(res.status).toBe(401)
+  })
+
+  it('存在しないIDは401', async () => {
+    const { db } = await authed()
+    const res = await handleApi(req('/api/auth/login', 'POST', { username: 'nobody', password: PW }), db)
     expect(res.status).toBe(401)
   })
 
@@ -139,6 +163,32 @@ describe('worker 認証', () => {
     const { db } = await authed()
     const res = await handleApi(req('/api/settings', 'GET'), db)
     expect(res.status).toBe(401)
+  })
+
+  it('ログイン中は別アカウントを追加でき、そのIDでログインできる', async () => {
+    const { db, cookie } = await authed()
+    const reg = await handleApi(
+      req('/api/auth/register', 'POST', { username: 'staff2', password: 'abcd' }, cookie),
+      db,
+    )
+    expect(reg.status).toBe(200)
+    const login = await handleApi(req('/api/auth/login', 'POST', { username: 'staff2', password: 'abcd' }), db)
+    expect(login.status).toBe(200)
+  })
+
+  it('重複IDの追加は409', async () => {
+    const { db, cookie } = await authed()
+    const reg = await handleApi(
+      req('/api/auth/register', 'POST', { username: USER, password: 'abcd' }, cookie),
+      db,
+    )
+    expect(reg.status).toBe(409)
+  })
+
+  it('未ログインでのアカウント追加は401', async () => {
+    const { db } = await authed()
+    const reg = await handleApi(req('/api/auth/register', 'POST', { username: 'x', password: 'abcd' }), db)
+    expect(reg.status).toBe(401)
   })
 })
 
