@@ -165,9 +165,8 @@ function AuthCard({
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
-        <div className="mb-5 flex items-center gap-2.5">
-          <span className="text-3xl">🗓️</span>
-          <h1 className="text-2xl font-bold text-slate-900">ShiftCraft</h1>
+        <div className="mb-5">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
         </div>
         <h2 className="text-lg font-bold text-slate-800">{title}</h2>
         <p className="mb-5 mt-1.5 text-base leading-relaxed text-slate-500">{desc}</p>

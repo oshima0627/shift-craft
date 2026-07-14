@@ -21,15 +21,15 @@ type TabId =
 
 // 手順の順番は「お店の基本を決める → 期間と忙しさ → 必要人数 → 希望休 → 条件 → 生成」
 // の自然な流れに並べる（役割・時間帯・スタッフが揃ってから忙しさ・必要人数に進む）。
-const TABS: { id: TabId; label: string; icon: string; path: string }[] = [
-  { id: 'roles', label: '役割', icon: '🏷️', path: '/roles' },
-  { id: 'shifts', label: '時間帯', icon: '🕒', path: '/shifts' },
-  { id: 'staff', label: 'スタッフ', icon: '👥', path: '/staff' },
-  { id: 'busyness', label: '忙しさ', icon: '📅', path: '/busyness' },
-  { id: 'requirements', label: '必要人数', icon: '🔢', path: '/requirements' },
-  { id: 'dayoff', label: '希望休', icon: '🗓️', path: '/dayoff' },
-  { id: 'constraints', label: '条件', icon: '⚙️', path: '/constraints' },
-  { id: 'generate', label: 'シフト生成', icon: '✨', path: '/generate' },
+const TABS: { id: TabId; label: string; path: string }[] = [
+  { id: 'roles', label: '役割', path: '/roles' },
+  { id: 'shifts', label: '時間帯', path: '/shifts' },
+  { id: 'staff', label: 'スタッフ', path: '/staff' },
+  { id: 'busyness', label: '忙しさ', path: '/busyness' },
+  { id: 'requirements', label: '必要人数', path: '/requirements' },
+  { id: 'dayoff', label: '希望休', path: '/dayoff' },
+  { id: 'constraints', label: '条件', path: '/constraints' },
+  { id: 'generate', label: 'シフト生成', path: '/generate' },
 ]
 
 /** URLパス → タブID（不明・ルートは最初の手順） */
@@ -69,10 +69,9 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
     <div className="min-h-screen">
       <header className="no-print sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1920px] items-center justify-between gap-3 px-3 py-4 sm:px-5">
-          <div className="flex items-center gap-2.5">
-            <span className="text-2xl">🗓️</span>
-            <h1 className="text-xl font-bold text-slate-900">ShiftCraft</h1>
-            <span className="hidden text-sm text-slate-400 sm:inline">シフト作成アシスト</span>
+          <div className="flex items-baseline gap-2.5">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
+            <span className="hidden text-sm text-slate-400 sm:inline">シフト表作成</span>
           </div>
           <div className="flex items-center gap-2">
             {onLogout && (
@@ -107,7 +106,6 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
                     >
                       {i + 1}
                     </span>
-                    <span aria-hidden>{t.icon}</span>
                     <span>{t.label}</span>
                   </button>
                 </li>

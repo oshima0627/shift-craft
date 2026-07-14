@@ -133,14 +133,14 @@ export default function DataMenu({ authed = false }: { authed?: boolean }) {
               onClick={handleCloudSave}
               disabled={busy}
             >
-              ☁️ クラウドに保存
+              クラウドに保存
             </button>
             <button
               className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100 disabled:opacity-50"
               onClick={handleCloudLoad}
               disabled={busy}
             >
-              ☁️ クラウドから読込
+              クラウドから読込
             </button>
             {getLastSyncedAt() && (
               <p className="px-4 pb-1 text-xs text-slate-400">
@@ -152,13 +152,13 @@ export default function DataMenu({ authed = false }: { authed?: boolean }) {
               className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100"
               onClick={handleExport}
             >
-              ⬇️ 設定をエクスポート
+              設定をエクスポート（バックアップ）
             </button>
             <button
               className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100"
               onClick={() => fileRef.current?.click()}
             >
-              ⬆️ 設定をインポート
+              設定をインポート（復元）
             </button>
             {authed && (
               <>
@@ -167,7 +167,7 @@ export default function DataMenu({ authed = false }: { authed?: boolean }) {
                   className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100"
                   onClick={handleAddAccount}
                 >
-                  👤 アカウントを追加
+                  アカウントを追加
                 </button>
               </>
             )}
@@ -183,7 +183,7 @@ export default function DataMenu({ authed = false }: { authed?: boolean }) {
                 }
               }}
             >
-              🧪 テストデータ投入（15人）
+              テストデータ投入（15人）
             </button>
             <button
               className="block w-full px-4 py-2.5 text-left text-base text-red-600 hover:bg-red-50"
@@ -194,7 +194,7 @@ export default function DataMenu({ authed = false }: { authed?: boolean }) {
                 }
               }}
             >
-              🗑️ 初期化（サンプルに戻す）
+              初期化（サンプルに戻す）
             </button>
           </div>
         </>

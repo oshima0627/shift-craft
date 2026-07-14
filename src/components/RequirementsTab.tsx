@@ -39,7 +39,7 @@ export default function RequirementsTab() {
         {shifts.map((shift) => (
           <div key={shift.id} className="card">
             <h3 className="mb-3 section-title">
-              🕒 {shift.name}
+              {shift.name}
               <span className="ml-2 text-sm font-normal text-slate-400">
                 {shift.start}〜{shift.end}
               </span>
@@ -126,7 +126,7 @@ function OverridesCard() {
   return (
     <div className="card space-y-3">
       <div className="space-y-1">
-        <h3 className="section-title">📌 特定日の人数上書き</h3>
+        <h3 className="section-title">特定日の人数上書き</h3>
         <p className="section-desc">
           イベント日など「この日は◯人」を指定できます。忙しさ段階の設定より優先されます（0人で「この日はこの枠なし」も可）。
         </p>

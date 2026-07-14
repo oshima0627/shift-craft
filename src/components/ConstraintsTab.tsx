@@ -44,7 +44,7 @@ export default function ConstraintsTab() {
         { id: newId('rule'), text, parsed: result.parsed },
       ],
     })
-    setRuleFeedback(result.parsed ? `✅ 解釈: ${result.description}` : `⚠️ ${result.description}`)
+    setRuleFeedback(result.parsed ? `解釈: ${result.description}` : `未解釈: ${result.description}`)
     setRuleText('')
   }
 
@@ -61,7 +61,7 @@ export default function ConstraintsTab() {
       {/* 労働法・働き方ルール */}
       <div className="card space-y-4">
         <div className="space-y-1">
-          <h3 className="section-title">⚖️ 労働法・働き方ルール</h3>
+          <h3 className="section-title">労働法・働き方ルール</h3>
           <p className="section-desc">
             労働基準法と厚労省の指針に基づく既定値を設定済みです。生成時に自動で守られ、
             手動編集後も違反があれば警告されます。
@@ -164,7 +164,7 @@ export default function ConstraintsTab() {
       <div className="card space-y-3">
         <div>
           <h3 className="section-title">
-            🚫 同じ日に出勤させない（NGペア）
+            同じ日に出勤させない（NGペア）
           </h3>
           <p className="section-desc">
             指定した2人は同じ日に一緒のシフトに入りません（ハード制約）。
@@ -209,7 +209,7 @@ export default function ConstraintsTab() {
 
       {/* 経験者最低数 */}
       <div className="card space-y-2">
-        <h3 className="section-title">🧑‍🏫 新人だけにしない</h3>
+        <h3 className="section-title">新人だけにしない</h3>
         <p className="section-desc">
           各シフトに経験者（新人以外）を最低何名配置するか。1以上で「新人だけ」を防ぎます。
         </p>
@@ -230,7 +230,7 @@ export default function ConstraintsTab() {
       {/* カスタム条件（自然文） */}
       <div className="card space-y-3">
         <div>
-          <h3 className="section-title">💬 その他の条件（文章で入力）</h3>
+          <h3 className="section-title">その他の条件（文章で入力）</h3>
           <p className="section-desc">
             文章で書くとルールベース（AI不使用）で自動解釈します。例:
             「田中と佐藤は同じ日に入れない」「高橋は火曜は休み」「伊藤は週3日まで」
@@ -284,7 +284,7 @@ export default function ConstraintsTab() {
 
       {/* ソフト制約の重み */}
       <div className="card space-y-3">
-        <h3 className="section-title">⚖️ 優先度（ソフト制約の重み）</h3>
+        <h3 className="section-title">優先度（ソフト制約の重み）</h3>
         <div className="space-y-3">
           <WeightSlider
             label="出勤回数の公平化"
@@ -315,7 +315,7 @@ export default function ConstraintsTab() {
 
       {/* メモ */}
       <div className="card space-y-2">
-        <h3 className="section-title">📝 その他の条件メモ</h3>
+        <h3 className="section-title">その他の条件メモ</h3>
         <p className="section-desc">
           自動化しきれない条件を書き留めておけます（生成結果と一緒に表示され、手動調整の参考になります）。
         </p>

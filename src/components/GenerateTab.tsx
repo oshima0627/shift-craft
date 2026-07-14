@@ -51,10 +51,10 @@ export default function GenerateTab() {
           {result && (
             <>
               <button className="btn-ghost" onClick={() => window.print()}>
-                🖨️ 印刷
+                印刷
               </button>
               <button className="btn-ghost" onClick={() => exportCsv(data, result)}>
-                ⬇️ CSV
+                CSV出力
               </button>
             </>
           )}
@@ -63,7 +63,7 @@ export default function GenerateTab() {
             onClick={handleGenerate}
             disabled={generating}
           >
-            {generating ? '生成中…' : '✨ シフトを生成'}
+            {generating ? '生成中…' : 'シフトを生成'}
           </button>
         </div>
       </div>
@@ -91,7 +91,7 @@ export default function GenerateTab() {
 
       {preflightIssues.length > 0 && (
         <div className="no-print rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          <p className="font-medium">⚠️ 生成前の確認</p>
+          <p className="font-bold">生成前の確認</p>
           <ul className="ml-4 list-disc">
             {preflightIssues.map((m, i) => (
               <li key={i}>{m}</li>
@@ -154,7 +154,7 @@ export default function GenerateTab() {
               {lawErrors.length > 0 && (
                 <div className="rounded-md border border-red-200 bg-red-50 p-3">
                   <p className="mb-1 text-sm font-bold text-red-700">
-                    ⚖️ 法令エラー（{lawErrors.length}件）
+                    法令エラー（{lawErrors.length}件）
                   </p>
                   <ul className="space-y-0.5 text-sm text-red-600">
                     {lawErrors.map((w, i) => (
@@ -181,7 +181,7 @@ export default function GenerateTab() {
           {/* メモ */}
           {data.constraints.notes.trim() && (
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              <p className="mb-1 font-bold">📝 条件メモ</p>
+              <p className="mb-1 font-bold">条件メモ</p>
               <p className="whitespace-pre-wrap">{data.constraints.notes}</p>
             </div>
           )}
