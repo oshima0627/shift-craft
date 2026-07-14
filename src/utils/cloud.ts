@@ -61,3 +61,104 @@ export function formatSyncTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+
+// ===== 認証（アプリ内ログイン） =====
+
+export type AuthStatus =
+  | { backend: true; configured: boolean; authenticated: boolean }
+  | { backend: false }
+
+/** 認証状態を取得。バックエンド未接続（ローカル開発等）なら backend:false */
+export async function getAuthStatus(): Promise<AuthStatus> {
+  try {
+    const res = await fetch('/api/auth/status', { headers: { accept: 'application/json' } })
+    const ct = res.headers.get('content-type') ?? ''
+    if (!ct.includes('application/json')) return { backend: false }
+    const body = (await res.json()) as { configured?: boolean; authenticated?: boolean }
+    if (typeof body.configured !== 'boolean') return { backend: false }
+    return { backend: true, configured: body.configured, authenticated: !!body.authenticated }
+  } catch {
+    return { backend: false }
+  }
+}
+
+async function postJson(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (res.ok) return { ok: true }
+    const b = (await res.json().catch(() => ({}))) as { error?: string }
+    return { ok: false, error: b.error }
+  } catch {
+    return { ok: false, error: 'network' }
+  }
+}
+
+/** 初回パスワード設定（未設定時のみ） */
+export function setupPassword(password: string) {
+  return postJson('/api/auth/setup', { password })
+}
+
+/** ログイン */
+export function login(password: string) {
+  return postJson('/api/auth/login', { password })
+}
+
+/** ログアウト */
+export async function logout(): Promise<void> {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' })
+  } catch {
+    // ignore
+  }
+}
+
+// ===== 自動同期 =====
+
+// 直近にクラウドと一致していた設定JSON（冗長な保存・保存ループを防ぐ）
+let lastSyncedJson: string | null = null
+
+/**
+ * クラウドの設定を取り込む（ログイン直後に呼ぶ）。
+ * クラウドに保存があれば取り込み、無ければ現在のローカルをクラウドへ初期保存する。
+ */
+export async function pullCloudIntoStore(
+  getData: () => AppData,
+  setData: (data: AppData) => void,
+): Promise<void> {
+  const cloud = await fetchCloud()
+  if (cloud) {
+    setData(cloud.data)
+    lastSyncedJson = JSON.stringify(getData())
+    setLastSyncedAt(cloud.updatedAt)
+  } else {
+    const res = await saveCloud(getData(), null, true)
+    if (res.ok) {
+      lastSyncedJson = JSON.stringify(getData())
+      setLastSyncedAt(res.updatedAt)
+    }
+  }
+}
+
+/**
+ * 変更があればクラウドへ保存（自動同期）。
+ * 競合（別端末が先に保存）時はリモートを採用して取り込む。
+ */
+export async function pushCloudIfChanged(
+  getData: () => AppData,
+  setData: (data: AppData) => void,
+): Promise<void> {
+  const json = JSON.stringify(getData())
+  if (json === lastSyncedJson) return
+  const res = await saveCloud(getData(), getLastSyncedAt())
+  if (res.ok) {
+    lastSyncedJson = json
+    setLastSyncedAt(res.updatedAt)
+  } else {
+    // 競合 → リモートを正として取り込む
+    await pullCloudIntoStore(getData, setData)
+  }
+}

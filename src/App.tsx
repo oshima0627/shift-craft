@@ -36,7 +36,7 @@ function tabFromPath(pathname: string): TabId {
   return hit ? hit.id : 'busyness'
 }
 
-export default function App() {
+export default function App({ onLogout }: { onLogout?: () => void } = {}) {
   // 画面ごとにURLを持つ（/busyness, /staff, /generate ...）
   const [tab, setTabState] = useState<TabId>(() => tabFromPath(window.location.pathname))
 
@@ -70,7 +70,14 @@ export default function App() {
             <h1 className="text-lg font-bold text-slate-800">ShiftCraft</h1>
             <span className="text-xs text-slate-400">シフト作成AI</span>
           </div>
-          <DataMenu />
+          <div className="flex items-center gap-2">
+            {onLogout && (
+              <button className="btn-ghost text-sm" onClick={onLogout}>
+                ログアウト
+              </button>
+            )}
+            <DataMenu />
+          </div>
         </div>
         <nav className="mx-auto flex max-w-[1400px] gap-1 overflow-x-auto px-2 pb-2">
           {TABS.map((t) => (
