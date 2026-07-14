@@ -76,6 +76,23 @@ npm test         # ユニットテスト
 
 `npm run build` で生成される `dist/` は静的ファイルなので、GitHub Pages / Vercel / Netlify 等にそのまま配置できます。
 
+## デプロイ（Cloudflare）とクラウド保存
+
+Cloudflare Workers + D1 + Cloudflare Access で「どの端末からも同じ設定を使える」構成に対応しています。
+
+- 右上「⋯ データ」メニューの **☁️ クラウドに保存 / クラウドから読込**（明示同期・楽観ロックつき）
+- 保存履歴は直近20世代をD1に保持（誤上書きからの復元可）
+- 認証は Cloudflare Access（メールのワンタイムコード）でサイト全体を保護
+
+```bash
+npx wrangler login
+npx wrangler d1 create shift-craft-db   # 出力の database_id を wrangler.jsonc に設定
+npx wrangler d1 migrations apply shift-craft-db --remote
+npm run deploy
+```
+
+詳細手順（Access の設定を含む・必読）: [`docs/deploy-cloudflare.md`](docs/deploy-cloudflare.md)
+
 ## 操作の流れ
 
 1. **期間**：対象月と祝日を設定

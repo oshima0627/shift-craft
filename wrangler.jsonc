@@ -1,0 +1,23 @@
+{
+  // Cloudflare Workers 設定。デプロイ手順は docs/deploy-cloudflare.md を参照
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shift-craft",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // /api/* は静的アセットより先に必ず Worker を通す
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "shift-craft-db",
+      // ↓ `npx wrangler d1 create shift-craft-db` の出力で置き換えてください
+      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

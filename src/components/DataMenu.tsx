@@ -1,13 +1,73 @@
 import { useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import type { AppData } from '../types'
+import {
+  fetchCloud,
+  formatSyncTime,
+  getLastSyncedAt,
+  saveCloud,
+  setLastSyncedAt,
+} from '../utils/cloud'
 
 export default function DataMenu() {
   const data = useStore((s) => s.data)
   const importData = useStore((s) => s.importData)
   const resetData = useStore((s) => s.resetData)
   const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const cloudUnavailableMsg =
+    'クラウドに接続できませんでした。Cloudflareにデプロイした本番URLで開いているか確認してください（ローカル開発ではクラウド保存は使えません）。'
+
+  const handleCloudSave = async () => {
+    setBusy(true)
+    try {
+      const res = await saveCloud(data, getLastSyncedAt())
+      if (res.ok) {
+        setLastSyncedAt(res.updatedAt)
+        alert(`クラウドに保存しました（${formatSyncTime(res.updatedAt)}）。`)
+      } else if (
+        confirm(
+          `クラウド上に別の保存があります（${formatSyncTime(res.conflictUpdatedAt)}）。\nこの端末の内容で上書きしますか？`,
+        )
+      ) {
+        const forced = await saveCloud(data, null, true)
+        if (forced.ok) {
+          setLastSyncedAt(forced.updatedAt)
+          alert(`クラウドに保存しました（${formatSyncTime(forced.updatedAt)}）。`)
+        }
+      }
+    } catch {
+      alert(cloudUnavailableMsg)
+    } finally {
+      setBusy(false)
+      setOpen(false)
+    }
+  }
+
+  const handleCloudLoad = async () => {
+    setBusy(true)
+    try {
+      const cloud = await fetchCloud()
+      if (!cloud) {
+        alert('クラウドに保存データがまだありません。先に「クラウドに保存」してください。')
+      } else if (
+        confirm(
+          `クラウドの設定（${formatSyncTime(cloud.updatedAt)} 保存）で、この端末の設定を置き換えますか？`,
+        )
+      ) {
+        importData(cloud.data)
+        setLastSyncedAt(cloud.updatedAt)
+        alert('クラウドから読み込みました。')
+      }
+    } catch {
+      alert(cloudUnavailableMsg)
+    } finally {
+      setBusy(false)
+      setOpen(false)
+    }
+  }
 
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -50,7 +110,27 @@ export default function DataMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+          <div className="absolute right-0 z-20 mt-1 w-60 rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+            <button
+              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100 disabled:opacity-50"
+              onClick={handleCloudSave}
+              disabled={busy}
+            >
+              ☁️ クラウドに保存
+            </button>
+            <button
+              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100 disabled:opacity-50"
+              onClick={handleCloudLoad}
+              disabled={busy}
+            >
+              ☁️ クラウドから読込
+            </button>
+            {getLastSyncedAt() && (
+              <p className="px-3 pb-1 text-[10px] text-slate-400">
+                最終同期: {formatSyncTime(getLastSyncedAt()!)}
+              </p>
+            )}
+            <div className="my-1 border-t border-slate-100" />
             <button
               className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100"
               onClick={handleExport}
