@@ -2,30 +2,27 @@ import { useMemo } from 'react'
 import { useStore } from '../state/store'
 import { busynessIdOf } from '../utils/busyness'
 import { fmt } from '../utils/date'
+import { isJapaneseHoliday } from '../utils/jpHolidays'
 
 const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土']
 
 /**
  * 忙しさカレンダー。
- * - 月を切り替えて対象期間を決める（期間タブの代わり）
+ * - 月を切り替えて対象期間を決める
  * - 各日をクリックして忙しさ段階を切り替える（段階ごとに色付け）
- * - 忙しさ段階は可変（追加・削除・改名・色変更）。既定は平日／土日祝で別々に指定
- * 必要人数はこの忙しさ段階ごとに設定する。
+ * - 忙しさ段階は可変（追加・削除・改名・色変更）
+ * 個別に設定していない日は自動判定（土日祝=最も忙しい / 平日=中間）。
+ * 祝日は日本の祝日を自動で判定する。
  */
 export default function BusynessCalendar() {
   const period = useStore((s) => s.data.period)
   const levels = useStore((s) => s.data.busynessLevels)
-  const weekdayDefault = useStore((s) => s.data.defaultBusynessLevelId)
-  const weekendDefault = useStore((s) => s.data.weekendBusynessLevelId)
   const data = useStore((s) => s.data)
   const updatePeriod = useStore((s) => s.updatePeriod)
   const setDayBusyness = useStore((s) => s.setDayBusyness)
   const addBusynessLevel = useStore((s) => s.addBusynessLevel)
   const updateBusynessLevel = useStore((s) => s.updateBusynessLevel)
   const removeBusynessLevel = useStore((s) => s.removeBusynessLevel)
-  const setDefaultBusynessLevel = useStore((s) => s.setDefaultBusynessLevel)
-  const setWeekendBusynessLevel = useStore((s) => s.setWeekendBusynessLevel)
-  const setWeekendsToLevel = useStore((s) => s.setWeekendsToLevel)
 
   const [year, month] = useMemo(() => {
     const [y, m] = period.start.split('-').map(Number)
@@ -60,21 +57,13 @@ export default function BusynessCalendar() {
     if (next) setDayBusyness(date, next.id)
   }
 
-  const addHoliday = (d: string) => {
-    if (d && !period.holidays.includes(d)) {
-      updatePeriod({ holidays: [...period.holidays, d].sort() })
-    }
-  }
-  const removeHoliday = (d: string) =>
-    updatePeriod({ holidays: period.holidays.filter((x) => x !== d) })
-
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-base font-bold text-slate-700">忙しさカレンダー</h2>
         <p className="text-sm text-slate-500">
           月を切り替えて対象期間を決め、各日の忙しさをクリックで設定します（クリックで次の段階へ）。
-          必要人数は忙しさ段階ごとに設定します。
+          個別に設定していない日は自動判定（土日祝・祝日＝最も忙しい／平日＝中間）。祝日は自動で判定します。
         </p>
       </div>
 
@@ -112,41 +101,6 @@ export default function BusynessCalendar() {
             </div>
           ))}
         </div>
-
-        {/* 曜日タイプ別の既定 */}
-        <div className="grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <span className="w-24">平日の既定</span>
-            <select
-              className="input"
-              value={weekdayDefault}
-              onChange={(e) => setDefaultBusynessLevel(e.target.value)}
-            >
-              {levels.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <span className="w-24">土日祝の既定</span>
-            <select
-              className="input"
-              value={weekendDefault}
-              onChange={(e) => setWeekendBusynessLevel(e.target.value)}
-            >
-              {levels.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <p className="text-xs text-slate-400">
-          個別に設定していない日は、平日／土日祝それぞれの既定が適用されます（初期値: 平日=普通・土日祝=忙しい）。
-        </p>
       </div>
 
       {/* 月カレンダー */}
@@ -160,16 +114,6 @@ export default function BusynessCalendar() {
           </div>
           <button className="btn-ghost" onClick={nextMonth}>
             翌月 ▶
-          </button>
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            className="btn-ghost text-xs"
-            onClick={() => setWeekendsToLevel()}
-            title="この月の土日祝をすべて『土日祝の既定』段階にします"
-          >
-            土日祝をすべて「{levelById.get(weekendDefault)?.name ?? '忙しい'}」にする
           </button>
         </div>
 
@@ -188,7 +132,7 @@ export default function BusynessCalendar() {
             if (!date) return <div key={i} />
             const day = Number(date.split('-')[2])
             const level = levelById.get(busynessIdOf(data, date))
-            const isHoliday = period.holidays.includes(date)
+            const holiday = isJapaneseHoliday(date)
             return (
               <button
                 key={date}
@@ -199,7 +143,7 @@ export default function BusynessCalendar() {
               >
                 <span className="text-slate-700">
                   {day}
-                  {isHoliday && <span className="ml-0.5 text-[10px] text-red-500">祝</span>}
+                  {holiday && <span className="ml-0.5 text-[10px] text-red-500">祝</span>}
                 </span>
                 <span
                   className="mt-0.5 rounded px-1 text-[10px] text-white"
@@ -219,33 +163,6 @@ export default function BusynessCalendar() {
               {l.name}
             </span>
           ))}
-        </div>
-      </div>
-
-      {/* 祝日 */}
-      <div className="card space-y-2">
-        <h3 className="text-sm font-bold text-slate-700">祝日</h3>
-        <p className="text-xs text-slate-500">
-          登録した日は「土日祝の既定」の忙しさが適用されます（個別指定があればそちらが優先）。
-        </p>
-        <input
-          type="date"
-          className="input max-w-[12rem]"
-          onChange={(e) => {
-            addHoliday(e.target.value)
-            e.target.value = ''
-          }}
-        />
-        <div className="flex flex-wrap gap-2">
-          {period.holidays.map((d) => (
-            <span key={d} className="chip bg-red-50 text-red-600">
-              {Number(d.split('-')[1])}/{Number(d.split('-')[2])}
-              <button className="ml-1 text-red-300 hover:text-red-600" onClick={() => removeHoliday(d)}>
-                ×
-              </button>
-            </span>
-          ))}
-          {period.holidays.length === 0 && <span className="text-xs text-slate-400">未登録</span>}
         </div>
       </div>
 

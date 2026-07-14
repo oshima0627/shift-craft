@@ -37,8 +37,8 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
               スタッフ
             </th>
             {dates.map((date) => {
-              const rest = isRestDay(date, data.period.holidays)
-              const cat = dayCategoryOf(date, data.period.holidays)
+              const rest = isRestDay(date)
+              const cat = dayCategoryOf(date)
               return (
                 <th
                   key={date}
@@ -83,7 +83,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
               {dates.map((date) => {
                 const cells = cellsOf(st.id, date)
                 const unavailable = st.unavailableDates.includes(date)
-                const rest = isRestDay(date, data.period.holidays)
+                const rest = isRestDay(date)
                 return (
                   <td
                     key={date}

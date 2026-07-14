@@ -239,7 +239,7 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
   const weekdayByDate = new Map<string, number>()
   const weekKeyByDate = new Map<string, string>()
   for (const date of dates) {
-    categoryByDate.set(date, dayCategoryOf(date, data.period.holidays))
+    categoryByDate.set(date, dayCategoryOf(date))
     weekdayByDate.set(date, new Date(date + 'T00:00:00').getDay())
     weekKeyByDate.set(date, weekKeyOf(date))
   }
