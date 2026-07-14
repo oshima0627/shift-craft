@@ -121,20 +121,31 @@ export async function logout(): Promise<void> {
 // 直近にクラウドと一致していた設定JSON（冗長な保存・保存ループを防ぐ）
 let lastSyncedJson: string | null = null
 
+/** 実質的に空のデータか（役割・スタッフ・シフトがすべて無い） */
+function isEmptyData(d: AppData): boolean {
+  return (
+    (d.roles?.length ?? 0) === 0 &&
+    (d.staff?.length ?? 0) === 0 &&
+    (d.shifts?.length ?? 0) === 0
+  )
+}
+
 /**
  * クラウドの設定を取り込む（ログイン直後に呼ぶ）。
- * クラウドに保存があれば取り込み、無ければ現在のローカルをクラウドへ初期保存する。
+ * クラウドに中身のある保存があれば取り込む。クラウドが無い/空の場合は、
+ * 現在のローカル（既存の作業内容）をクラウドへ保存する（空データで上書きしない）。
  */
 export async function pullCloudIntoStore(
   getData: () => AppData,
   setData: (data: AppData) => void,
 ): Promise<void> {
   const cloud = await fetchCloud()
-  if (cloud) {
+  if (cloud && !isEmptyData(cloud.data)) {
     setData(cloud.data)
     lastSyncedJson = JSON.stringify(getData())
     setLastSyncedAt(cloud.updatedAt)
   } else {
+    // クラウドが無い/空 → ローカルを保存（初回はローカルを正とする）
     const res = await saveCloud(getData(), null, true)
     if (res.ok) {
       lastSyncedJson = JSON.stringify(getData())
