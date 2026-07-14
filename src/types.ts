@@ -34,7 +34,7 @@ export interface ShiftType {
   name: string
   /** "HH:mm" */
   start: string
-  /** "HH:mm" */
+  /** "HH:mm"。start より前なら翌日終了（深夜営業）とみなす */
   end: string
 }
 
@@ -45,10 +45,18 @@ export interface Staff {
   /** 担当できる役割ID（複数可） */
   roleIds: string[]
   level: ExperienceLevel
+  /** 時給（円）。人件費計算に使用 */
+  hourlyWage: number
+  /** 18歳未満（高校生等）。22時以降の深夜シフトに入れない（労基法61条） */
+  isMinor: boolean
   /** 期間内の最大出勤日数。null=無制限 */
   maxShifts: number | null
-  /** 連続出勤日数の上限。null=無制限 */
+  /** 連続出勤日数の上限。null=全体設定に従う */
   maxConsecutive: number | null
+  /** 週の労働時間上限（時間）。null=法定・全体設定に従う */
+  weeklyMaxHours: number | null
+  /** 週の出勤日数上限。null=法定（週1休＝最大6日）に従う */
+  weeklyMaxDays: number | null
   /** 出勤不可日・希望休 "yyyy-MM-dd" */
   unavailableDates: string[]
   /** 割り当て可能なシフト時間帯ID。空=すべて可 */
@@ -71,21 +79,65 @@ export interface IncompatiblePair {
   b: string // staffId
 }
 
+// ===== カスタム条件（自然文→構造化ルール） =====
+
+export type ParsedRule =
+  | { kind: 'pairAvoid'; a: string; b: string }
+  | { kind: 'pairTogether'; a: string; b: string }
+  | { kind: 'forbidWeekday'; staffId: string; weekday: number } // 0=日〜6=土
+  | { kind: 'forbidShift'; staffId: string; shiftId: string }
+  | { kind: 'onlyShift'; staffId: string; shiftId: string }
+  | { kind: 'maxDaysPerWeek'; staffId: string; days: number }
+  | { kind: 'maxConsecutive'; staffId: string; days: number }
+  | { kind: 'fixWeekdayShift'; staffId: string; weekday: number; shiftId: string }
+
+export interface CustomRule {
+  id: string
+  /** 入力された元の文 */
+  text: string
+  /** 解釈結果。null = 自動解釈できず（メモとして保持） */
+  parsed: ParsedRule | null
+}
+
 /** 制約設定 */
 export interface Constraints {
   /** 同じ日に一緒にできないペア */
   incompatiblePairs: IncompatiblePair[]
   /** 各シフトに必要な経験者(level>=1)の最低人数 */
   minExperiencedPerShift: number
+  /** 連勤上限の既定値（労基法35条の週1休 → 原則6連勤まで） */
+  maxConsecutiveDefault: number
+  /** 勤務間インターバル時間（終業→翌始業）。0=チェックしない。推奨9〜11h */
+  restIntervalHours: number
+  /** インターバルをハード制約として厳守するか（false=警告のみ） */
+  restIntervalHard: boolean
+  /** 週の法定労働時間上限。40h、または特例措置対象事業場（常時10人未満の商業・サービス業）は44h */
+  weeklyHoursCap: number
   /** ソフト制約の重み */
   weights: {
     /** 出勤回数の公平化 */
     fairness: number
     /** 希望シフトの尊重 */
     preference: number
+    /** 土日祝出勤の公平化 */
+    weekendFairness: number
+    /** 人件費の抑制（時給の低いスタッフをやや優先） */
+    cost: number
   }
+  /** 自然文で入力されたカスタム条件 */
+  customRules: CustomRule[]
   /** 自動化しきれない条件のメモ（生成時に注意喚起として表示） */
   notes: string
+}
+
+/** 人件費・売上の設定 */
+export interface CostSettings {
+  /** 対象期間の売上目標（円）。null=未設定 */
+  salesTarget: number | null
+  /** 目標人件費率（%）。飲食の目安は25〜30% */
+  targetLaborRate: number
+  /** 法定福利費（時給×約15%）を人件費に含めて表示するか */
+  includeWelfare: boolean
 }
 
 /** 期間設定 */
@@ -105,6 +157,7 @@ export interface AppData {
   staff: Staff[]
   requirements: Requirement[]
   constraints: Constraints
+  cost: CostSettings
   period: PeriodSettings
 }
 
@@ -127,10 +180,18 @@ export interface Unfilled {
   filled: number
 }
 
+/** 警告の分類 */
+export type WarningKind =
+  | 'coverage' // 人数不足
+  | 'law' // 労働法関連（休憩・週上限・年少者・連勤・インターバル）
+  | 'staffing' // 新人のみ・経験者不足など運用上の問題
+
 /** 制約違反・警告 */
 export interface Warning {
   date: string
   shiftId?: string
+  staffId?: string
+  kind: WarningKind
   message: string
   severity: 'error' | 'warning'
 }

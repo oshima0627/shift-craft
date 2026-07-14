@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../state/store'
 import { generateSchedule } from '../solver/scheduler'
+import { validateSchedule } from '../solver/compliance'
 import type { Assignment, ScheduleResult } from '../types'
 import { enumerateDates } from '../utils/date'
 import { exportCsv } from '../utils/csv'
 import ScheduleGrid from './ScheduleGrid'
+import CostReport from './CostReport'
 
 export default function GenerateTab() {
   const data = useStore((s) => s.data)
@@ -25,14 +27,17 @@ export default function GenerateTab() {
 
   const setAssignments = (assignments: Assignment[]) => {
     if (!result) return
-    // 手動編集後、負荷を再計算
+    // 手動編集後、負荷を再計算し、法令・人数・運用ルールを再検証
     const staffLoad: Record<string, number> = {}
     for (const s of data.staff) staffLoad[s.id] = 0
     for (const a of assignments) staffLoad[a.staffId] = (staffLoad[a.staffId] ?? 0) + 1
-    setResult({ ...result, assignments, staffLoad })
+    const { unfilled, warnings } = validateSchedule(data, assignments)
+    setResult({ ...result, assignments, staffLoad, unfilled, warnings })
   }
 
   const errors = result?.warnings.filter((w) => w.severity === 'error') ?? []
+  const lawErrors = errors.filter((w) => w.kind === 'law')
+  const coverageErrors = errors.filter((w) => w.kind !== 'law')
   const softWarnings = result?.warnings.filter((w) => w.severity === 'warning') ?? []
 
   const preflightIssues = preflight(data, dates.length)
@@ -83,12 +88,17 @@ export default function GenerateTab() {
       {result && (
         <>
           {/* サマリー */}
-          <div className="no-print grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="no-print grid grid-cols-2 gap-3 sm:grid-cols-5">
             <SummaryCard label="割り当て" value={`${result.assignments.length}件`} tone="brand" />
             <SummaryCard
               label="人数不足"
-              value={`${errors.length}件`}
-              tone={errors.length ? 'red' : 'green'}
+              value={`${coverageErrors.length}件`}
+              tone={coverageErrors.length ? 'red' : 'green'}
+            />
+            <SummaryCard
+              label="法令エラー"
+              value={`${lawErrors.length}件`}
+              tone={lawErrors.length ? 'red' : 'green'}
             />
             <SummaryCard
               label="警告"
@@ -105,16 +115,31 @@ export default function GenerateTab() {
           {/* カレンダー/グリッド */}
           <ScheduleGrid data={data} result={result} onChange={setAssignments} />
 
+          {/* 人件費・生産性 */}
+          <CostReport data={data} assignments={result.assignments} />
+
           {/* 未充足・警告 */}
           {(errors.length > 0 || softWarnings.length > 0) && (
             <div className="no-print space-y-2">
-              {errors.length > 0 && (
+              {coverageErrors.length > 0 && (
                 <div className="rounded-md border border-red-200 bg-red-50 p-3">
                   <p className="mb-1 text-sm font-bold text-red-700">
-                    人数不足（{errors.length}件）
+                    人数不足（{coverageErrors.length}件）
                   </p>
                   <ul className="space-y-0.5 text-sm text-red-600">
-                    {errors.map((w, i) => (
+                    {coverageErrors.map((w, i) => (
+                      <li key={i}>{w.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {lawErrors.length > 0 && (
+                <div className="rounded-md border border-red-200 bg-red-50 p-3">
+                  <p className="mb-1 text-sm font-bold text-red-700">
+                    ⚖️ 法令エラー（{lawErrors.length}件）
+                  </p>
+                  <ul className="space-y-0.5 text-sm text-red-600">
+                    {lawErrors.map((w, i) => (
                       <li key={i}>{w.message}</li>
                     ))}
                   </ul>

@@ -92,6 +92,10 @@ function StaffRow({ staff }: { staff: Staff }) {
           onChange={(e) => updateStaff(staff.id, { name: e.target.value })}
         />
         <span className={`chip ${levelColor}`}>{EXPERIENCE_LABELS[staff.level]}</span>
+        {staff.isMinor && (
+          <span className="chip bg-purple-100 text-purple-700">18歳未満</span>
+        )}
+        <span className="chip bg-slate-100 text-slate-600">¥{staff.hourlyWage}</span>
         <div className="flex flex-1 flex-wrap gap-1">
           {staff.roleIds.map((rid) => {
             const role = roles.find((r) => r.id === rid)
@@ -157,6 +161,65 @@ function StaffRow({ staff }: { staff: Staff }) {
               <option value={1}>一般</option>
               <option value={2}>ベテラン</option>
             </select>
+          </div>
+
+          <div>
+            <label className="label">時給（円）</label>
+            <input
+              type="number"
+              min={0}
+              step={10}
+              className="input"
+              value={staff.hourlyWage}
+              onChange={(e) => updateStaff(staff.id, { hourlyWage: Math.max(0, Number(e.target.value)) })}
+            />
+          </div>
+
+          <div className="flex items-end pb-1">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-brand-500"
+                checked={staff.isMinor}
+                onChange={(e) => updateStaff(staff.id, { isMinor: e.target.checked })}
+              />
+              18歳未満（高校生等）
+              <span className="text-xs text-slate-400">
+                — 22時以降のシフトに入りません（労基法61条）
+              </span>
+            </label>
+          </div>
+
+          <div>
+            <label className="label">週の労働時間上限（時間・空欄=法定に従う）</label>
+            <input
+              type="number"
+              min={1}
+              className="input"
+              value={staff.weeklyMaxHours ?? ''}
+              onChange={(e) =>
+                updateStaff(staff.id, {
+                  weeklyMaxHours: e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+              placeholder="例: 扶養内なら20など"
+            />
+          </div>
+
+          <div>
+            <label className="label">週の出勤日数上限（空欄=法定の週6日まで）</label>
+            <input
+              type="number"
+              min={1}
+              max={6}
+              className="input"
+              value={staff.weeklyMaxDays ?? ''}
+              onChange={(e) =>
+                updateStaff(staff.id, {
+                  weeklyMaxDays: e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+            />
           </div>
 
           <div>

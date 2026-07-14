@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import type { AppData } from '../types'
+import type { AppData, Constraints } from '../types'
 import { generateSchedule } from './scheduler'
+
+function baseConstraints(overrides: Partial<Constraints> = {}): Constraints {
+  return {
+    incompatiblePairs: [],
+    minExperiencedPerShift: 0,
+    maxConsecutiveDefault: 6,
+    restIntervalHours: 0,
+    restIntervalHard: false,
+    weeklyHoursCap: 40,
+    weights: { fairness: 1, preference: 1, weekendFairness: 1, cost: 0 },
+    customRules: [],
+    notes: '',
+    ...overrides,
+  }
+}
 
 function baseData(overrides: Partial<AppData> = {}): AppData {
   const data: AppData = {
@@ -10,12 +25,8 @@ function baseData(overrides: Partial<AppData> = {}): AppData {
     requirements: [
       { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
     ],
-    constraints: {
-      incompatiblePairs: [],
-      minExperiencedPerShift: 0,
-      weights: { fairness: 1, preference: 1 },
-      notes: '',
-    },
+    constraints: baseConstraints(),
+    cost: { salesTarget: null, targetLaborRate: 30, includeWelfare: false },
     period: { start: '2026-08-01', end: '2026-08-07', holidays: [] },
     ...overrides,
   }
@@ -30,8 +41,12 @@ const staff = (
   name: id,
   roleIds: ['r1'],
   level: 1,
+  hourlyWage: 1100,
+  isMinor: false,
   maxShifts: null,
   maxConsecutive: null,
+  weeklyMaxHours: null,
+  weeklyMaxDays: null,
   unavailableDates: [],
   allowedShiftIds: [],
   ...opts,
@@ -76,9 +91,6 @@ describe('generateSchedule', () => {
   it('H5: 連勤上限を超えない', () => {
     const data = baseData({
       period: { start: '2026-08-01', end: '2026-08-10', holidays: [] },
-      requirements: [
-        { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-      ],
       staff: [staff('a', { maxConsecutive: 2 })],
     })
     const res = generateSchedule(data)
@@ -106,12 +118,7 @@ describe('generateSchedule', () => {
         { roleId: 'r1', shiftId: 's1', counts: { weekday: 2, saturday: 2, sunday: 2, holiday: 2 } },
       ],
       staff: [staff('a'), staff('b'), staff('c'), staff('d')],
-      constraints: {
-        incompatiblePairs: [{ a: 'a', b: 'b' }],
-        minExperiencedPerShift: 0,
-        weights: { fairness: 1, preference: 1 },
-        notes: '',
-      },
+      constraints: baseConstraints({ incompatiblePairs: [{ a: 'a', b: 'b' }] }),
     })
     const res = generateSchedule(data)
     // 各日 a と b が同居していないこと
@@ -137,12 +144,7 @@ describe('generateSchedule', () => {
         staff('e1', { level: 1 }),
         staff('e2', { level: 2 }),
       ],
-      constraints: {
-        incompatiblePairs: [],
-        minExperiencedPerShift: 1,
-        weights: { fairness: 1, preference: 1 },
-        notes: '',
-      },
+      constraints: baseConstraints({ minExperiencedPerShift: 1 }),
     })
     const res = generateSchedule(data)
     const experienced = new Set(['e1', 'e2'])
@@ -199,5 +201,115 @@ describe('generateSchedule', () => {
     const r1 = generateSchedule(data)
     const r2 = generateSchedule(data)
     expect(r1.assignments).toEqual(r2.assignments)
+  })
+
+  // ===== 労働法制約（調査に基づく追加分） =====
+
+  it('H7: 18歳未満は22時を超えるシフトに入らない（労基法61条）', () => {
+    const data = baseData({
+      shifts: [
+        { id: 's1', name: '早番', start: '09:00', end: '17:00' },
+        { id: 's2', name: '遅番', start: '15:00', end: '23:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 's2', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      staff: [staff('minor', { isMinor: true }), staff('adult')],
+    })
+    const res = generateSchedule(data)
+    const minorLate = res.assignments.filter((a) => a.staffId === 'minor' && a.shiftId === 's2')
+    expect(minorLate).toHaveLength(0)
+    // 大人は遅番に入れる
+    expect(res.assignments.some((a) => a.staffId === 'adult' && a.shiftId === 's2')).toBe(true)
+  })
+
+  it('H8: 週の実働時間が法定上限(40h)を超えない（労基法32条）', () => {
+    // 早番: 拘束8h - 休憩45分 = 実働7h15m。6日で43.5h > 40h → 週内は5日まで
+    const data = baseData({
+      period: { start: '2026-08-02', end: '2026-08-08', holidays: [] }, // 日〜土の1週間
+      staff: [staff('a')],
+    })
+    const res = generateSchedule(data)
+    const aDays = res.assignments.filter((x) => x.staffId === 'a').length
+    // 7h15m × 5日 = 36.25h（OK）/ 6日 = 43.5h（NG）
+    expect(aDays).toBeLessThanOrEqual(5)
+    expect(res.warnings.filter((w) => w.kind === 'law' && w.severity === 'error')).toHaveLength(0)
+  })
+
+  it('H9: 週の出勤は最大6日（週1休・労基法35条）', () => {
+    // 実働の短いシフトなら時間上限に当たらないが、日数上限6日が効く
+    const data = baseData({
+      shifts: [{ id: 's1', name: '短時間', start: '10:00', end: '14:00' }],
+      period: { start: '2026-08-02', end: '2026-08-08', holidays: [] },
+      constraints: baseConstraints({ maxConsecutiveDefault: 12 }), // 連勤制約を緩めて日数制約を検証
+      staff: [staff('a')],
+    })
+    const res = generateSchedule(data)
+    expect(res.assignments.filter((x) => x.staffId === 'a').length).toBeLessThanOrEqual(6)
+  })
+
+  it('H10: 勤務間インターバル(ハード)でクローピングを防ぐ', () => {
+    const data = baseData({
+      shifts: [
+        { id: 'early', name: '早番', start: '09:00', end: '14:00' },
+        { id: 'late', name: '遅番', start: '17:00', end: '23:30' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      constraints: baseConstraints({ restIntervalHours: 11, restIntervalHard: true }),
+      staff: [staff('a'), staff('b'), staff('c')],
+    })
+    const res = generateSchedule(data)
+    // 遅番(〜23:30)→翌早番(9:00〜)は休息9.5h < 11h なので存在しないはず
+    const byStaffDate = new Map<string, string>()
+    for (const a of res.assignments) byStaffDate.set(`${a.staffId}|${a.date}`, a.shiftId)
+    for (const a of res.assignments) {
+      if (a.shiftId !== 'late') continue
+      const next = new Date(a.date)
+      next.setDate(next.getDate() + 1)
+      const nextStr = next.toISOString().slice(0, 10)
+      expect(byStaffDate.get(`${a.staffId}|${nextStr}`)).not.toBe('early')
+    }
+    expect(res.warnings.filter((w) => w.message.includes('クローピング'))).toHaveLength(0)
+  })
+
+  it('H11: カスタム条件（曜日NG・週N日まで）を守る', () => {
+    const data = baseData({
+      staff: [staff('a'), staff('b')],
+      constraints: baseConstraints({
+        customRules: [
+          { id: 'c1', text: 'aは月曜は休み', parsed: { kind: 'forbidWeekday', staffId: 'a', weekday: 1 } },
+          { id: 'c2', text: 'bは週2日まで', parsed: { kind: 'maxDaysPerWeek', staffId: 'b', days: 2 } },
+        ],
+      }),
+    })
+    const res = generateSchedule(data)
+    // 2026-08-03 は月曜
+    expect(res.assignments.some((x) => x.staffId === 'a' && x.date === '2026-08-03')).toBe(false)
+    // b は週2日まで（期間は 8/1(土) と 8/2〜8 の2週にまたがる）
+    const bDates = res.assignments.filter((x) => x.staffId === 'b').map((x) => x.date)
+    const week1 = bDates.filter((d) => d === '2026-08-01').length
+    const week2 = bDates.filter((d) => d >= '2026-08-02').length
+    expect(week1).toBeLessThanOrEqual(2)
+    expect(week2).toBeLessThanOrEqual(2)
+  })
+
+  it('S3: 土日祝の出勤が概ね公平になる', () => {
+    const data = baseData({
+      period: { start: '2026-08-01', end: '2026-08-31', holidays: [] },
+      staff: [staff('a'), staff('b'), staff('c'), staff('d')],
+      constraints: baseConstraints({ weights: { fairness: 1, preference: 1, weekendFairness: 3, cost: 0 } }),
+    })
+    const res = generateSchedule(data)
+    const weekendCount: Record<string, number> = { a: 0, b: 0, c: 0, d: 0 }
+    for (const x of res.assignments) {
+      const dow = new Date(x.date + 'T00:00:00').getDay()
+      if (dow === 0 || dow === 6) weekendCount[x.staffId]++
+    }
+    const counts = Object.values(weekendCount)
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(3)
   })
 })
