@@ -38,6 +38,10 @@ const TABS: { id: TabId; label: string; path: string }[] = [
  * それ以外はフォーム・カードが読みやすい幅に絞る（無駄に横に広げない）。
  * ヘッダー・ナビ・本文に同じ幅を適用して左右端を揃える。
  */
+// ヘッダー（ワードマーク・手順ナビ・手順バー）は画面遷移で幅が変わらないよう固定。
+// スタッフ画面と同じ幅に合わせる。
+const HEADER_WIDTH = 'max-w-[1040px]'
+
 const CONTENT_WIDTH: Record<TabId, string> = {
   roles: 'max-w-[880px]',
   shifts: 'max-w-[880px]',
@@ -86,7 +90,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
   return (
     <div className="min-h-screen">
       <header className="no-print sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className={`mx-auto flex ${containerW} items-center justify-between gap-3 px-3 py-4 sm:px-5`}>
+        <div className={`mx-auto flex ${HEADER_WIDTH} items-center justify-between gap-3 px-3 py-4 sm:px-5`}>
           <div className="flex items-baseline gap-2.5">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
             <span className="hidden text-sm text-slate-400 sm:inline">シフト表作成</span>
@@ -102,7 +106,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
         </div>
 
         {/* 手順ナビ：①〜⑧の流れが一目でわかるよう、番号つきの大きなステップに */}
-        <nav className={`mx-auto ${containerW} px-3 pb-3 sm:px-5`}>
+        <nav className={`mx-auto ${HEADER_WIDTH} px-3 pb-3 sm:px-5`}>
           <ol className="flex flex-wrap gap-2">
             {TABS.map((t, i) => {
               const active = tab === t.id
@@ -135,7 +139,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
 
       {/* 現在の手順の見出し（今どこにいるか一目でわかるように） */}
       <div className="no-print border-b border-slate-200 bg-white">
-        <div className={`mx-auto ${containerW} px-3 py-3 text-sm font-semibold text-brand-600 sm:px-5`}>
+        <div className={`mx-auto ${HEADER_WIDTH} px-3 py-3 text-sm font-semibold text-brand-600 sm:px-5`}>
           手順 {activeIndex + 1} / {TABS.length}
         </div>
       </div>
