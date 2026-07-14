@@ -15,8 +15,7 @@
     {
       "binding": "DB",
       "database_name": "shift-craft-db",
-      // ↓ `npx wrangler d1 create shift-craft-db` の出力で置き換えてください
-      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID",
+      "database_id": "00a1fa9b-482b-4b0a-a02e-b996e54bbb4a",
       "migrations_dir": "migrations"
     }
   ]
