@@ -122,7 +122,7 @@ export default function DayOffCalendar() {
           スタッフと対象期間（忙しさタブ）を設定すると、ここに希望休カレンダーが表示されます。
         </p>
       ) : (
-        <div className="card">
+        <div className="card p-2 sm:p-3">
           <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
               <col className="w-[5.5rem]" />

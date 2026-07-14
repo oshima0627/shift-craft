@@ -19,21 +19,23 @@ type TabId =
   | 'constraints'
   | 'generate'
 
+// 手順の順番は「お店の基本を決める → 期間と忙しさ → 必要人数 → 希望休 → 条件 → 生成」
+// の自然な流れに並べる（役割・時間帯・スタッフが揃ってから忙しさ・必要人数に進む）。
 const TABS: { id: TabId; label: string; icon: string; path: string }[] = [
-  { id: 'busyness', label: '忙しさ', icon: '📅', path: '/busyness' },
   { id: 'roles', label: '役割', icon: '🏷️', path: '/roles' },
   { id: 'shifts', label: '時間帯', icon: '🕒', path: '/shifts' },
   { id: 'staff', label: 'スタッフ', icon: '👥', path: '/staff' },
-  { id: 'dayoff', label: '希望休', icon: '🗓️', path: '/dayoff' },
+  { id: 'busyness', label: '忙しさ', icon: '📅', path: '/busyness' },
   { id: 'requirements', label: '必要人数', icon: '🔢', path: '/requirements' },
+  { id: 'dayoff', label: '希望休', icon: '🗓️', path: '/dayoff' },
   { id: 'constraints', label: '条件', icon: '⚙️', path: '/constraints' },
   { id: 'generate', label: 'シフト生成', icon: '✨', path: '/generate' },
 ]
 
-/** URLパス → タブID（不明・ルートは busyness） */
+/** URLパス → タブID（不明・ルートは最初の手順） */
 function tabFromPath(pathname: string): TabId {
   const hit = TABS.find((t) => t.path === pathname)
-  return hit ? hit.id : 'busyness'
+  return hit ? hit.id : TABS[0].id
 }
 
 export default function App({ onLogout }: { onLogout?: () => void } = {}) {
@@ -66,7 +68,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
   return (
     <div className="min-h-screen">
       <header className="no-print sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3 px-4 py-4">
+        <div className="mx-auto flex max-w-[1920px] items-center justify-between gap-3 px-3 py-4 sm:px-5">
           <div className="flex items-center gap-2.5">
             <span className="text-2xl">🗓️</span>
             <h1 className="text-xl font-bold text-slate-900">ShiftCraft</h1>
@@ -83,7 +85,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
         </div>
 
         {/* 手順ナビ：①〜⑧の流れが一目でわかるよう、番号つきの大きなステップに */}
-        <nav className="mx-auto max-w-[1400px] px-3 pb-3">
+        <nav className="mx-auto max-w-[1920px] px-3 pb-3 sm:px-5">
           <ol className="flex flex-wrap gap-2">
             {TABS.map((t, i) => {
               const active = tab === t.id
@@ -117,12 +119,12 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
 
       {/* 現在の手順の見出し（今どこにいるか一目でわかるように） */}
       <div className="no-print border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-[1400px] px-4 py-3 text-sm font-semibold text-brand-600">
+        <div className="mx-auto max-w-[1920px] px-3 py-3 text-sm font-semibold text-brand-600 sm:px-5">
           手順 {activeIndex + 1} / {TABS.length}
         </div>
       </div>
 
-      <main className="mx-auto max-w-[1400px] px-4 py-6">
+      <main className="mx-auto max-w-[1920px] px-3 py-6 sm:px-5">
         {tab === 'busyness' && <BusynessCalendar />}
         {tab === 'roles' && <RolesTab />}
         {tab === 'shifts' && <ShiftsTab />}

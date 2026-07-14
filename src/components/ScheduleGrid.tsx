@@ -29,7 +29,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
   }
 
   return (
-    <div className="card overflow-x-auto">
+    <div className="card overflow-x-auto p-2 sm:p-3">
       <table className="border-collapse text-sm">
         <thead>
           <tr>
