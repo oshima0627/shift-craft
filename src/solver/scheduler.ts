@@ -108,6 +108,7 @@ interface Ctx {
   rulesByStaff: Map<string, StaffRules>
   restLimitMin: number
   allowSplitShifts: boolean
+  preferSplitShifts: boolean
 }
 
 /** シフトID配列のうち最も遅く終わるシフト（前日→当日の休息計算用） */
@@ -258,6 +259,7 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
     rulesByStaff,
     restLimitMin: data.constraints.restIntervalHours * 60,
     allowSplitShifts: data.constraints.allowSplitShifts,
+    preferSplitShifts: data.constraints.preferSplitShifts,
   }
 }
 
@@ -687,6 +689,11 @@ function pickStaff(
 
     // ---- ソフト制約スコア（低いほど優先） ----
     let score = 0
+    // S0: 分割勤務の積極活用 — 既にその日出勤している人に2コマ目を強く優先
+    //     （少人数で回したい場合。公平化より優先させるため大きめのボーナス）
+    if (ctx.preferSplitShifts && (st.dayShiftIds.get(demand.date)?.length ?? 0) > 0) {
+      score -= 20
+    }
     // S1: 公平化 — 出勤が少ない人を優先
     score += st.totalAssigned * weights.fairness
     // S2: 希望シフト — allowedShiftIds を「希望」とみなし、希望に合致すれば軽く優遇

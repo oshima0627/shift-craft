@@ -4,6 +4,7 @@ import { generateSchedule } from '../solver/scheduler'
 import { validateSchedule } from '../solver/compliance'
 import type { Assignment, ScheduleResult } from '../types'
 import { enumerateDates } from '../utils/date'
+import { shiftsOverlap } from '../utils/time'
 import { exportCsv } from '../utils/csv'
 import ScheduleGrid from './ScheduleGrid'
 
@@ -180,6 +181,24 @@ function preflight(data: ReturnType<typeof useStore.getState>['data'], dayCount:
     0,
   )
   if (totalNeed === 0) issues.push('必要人数がすべて0です。「必要人数」で設定してください。')
+
+  // 分割勤務ONでも、全シフトの時間帯が重なっていると同日の掛け持ちは不可
+  if (data.constraints.allowSplitShifts && data.shifts.length >= 2) {
+    let hasNonOverlapping = false
+    for (let i = 0; i < data.shifts.length && !hasNonOverlapping; i++) {
+      for (let j = i + 1; j < data.shifts.length; j++) {
+        if (!shiftsOverlap(data.shifts[i], data.shifts[j])) {
+          hasNonOverlapping = true
+          break
+        }
+      }
+    }
+    if (!hasNonOverlapping) {
+      issues.push(
+        '分割勤務がONですが、すべての時間帯が重なっているため同じ人を1日に掛け持ちさせられません。早番の終了時刻を遅番の開始時刻以前にすると掛け持ちできます。',
+      )
+    }
+  }
   return issues
 }
 

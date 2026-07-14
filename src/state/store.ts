@@ -32,6 +32,8 @@ function defaultConstraints(): Constraints {
     weeklyHoursCap: 40,
     // 早番→遅番など時間帯が重ならなければ同日に複数シフトを許可
     allowSplitShifts: true,
+    // 既定は「足りない時だけ分割」。ONにすると余裕があっても積極的に分割で回す
+    preferSplitShifts: false,
     weights: { fairness: 1, preference: 1, weekendFairness: 1, cost: 0 },
     customRules: [],
     notes: '',

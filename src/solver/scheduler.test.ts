@@ -11,6 +11,7 @@ function baseConstraints(overrides: Partial<Constraints> = {}): Constraints {
     restIntervalHard: false,
     weeklyHoursCap: 40,
     allowSplitShifts: true,
+    preferSplitShifts: false,
     weights: { fairness: 1, preference: 1, weekendFairness: 1, cost: 0 },
     customRules: [],
     notes: '',
@@ -421,6 +422,33 @@ describe('generateSchedule', () => {
     const res = generateSchedule(data)
     // 週40h以内・週6日以内・法令エラーなしが守られること
     expect(res.warnings.filter((w) => w.kind === 'law' && w.severity === 'error')).toHaveLength(0)
+  })
+
+  it('preferSplitShifts ON: 人手に余裕があっても分割で回す', () => {
+    const base = {
+      shifts: [
+        { id: 'early', name: '早番', start: '11:00', end: '15:00' },
+        { id: 'late', name: '遅番', start: '17:00', end: '21:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
+      staff: [staff('a'), staff('b'), staff('c'), staff('d')], // 十分な人数
+    }
+    const splitDays = (r: ReturnType<typeof generateSchedule>) => {
+      const m = new Map<string, number>()
+      for (const x of r.assignments) m.set(`${x.staffId}|${x.date}`, (m.get(`${x.staffId}|${x.date}`) ?? 0) + 1)
+      return [...m.values()].filter((n) => n >= 2).length
+    }
+    // OFF（既定）: 余裕があるので分割は起きない
+    const off = generateSchedule(baseData({ ...base, constraints: baseConstraints({ preferSplitShifts: false }) }))
+    expect(splitDays(off)).toBe(0)
+    // ON: 同じ人が早番＋遅番の両方に入る
+    const on = generateSchedule(baseData({ ...base, constraints: baseConstraints({ preferSplitShifts: true }) }))
+    expect(splitDays(on)).toBe(1)
+    expect(on.unfilled).toHaveLength(0)
   })
 
   it('S3: 土日祝の出勤が概ね公平になる', () => {

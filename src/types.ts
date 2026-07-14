@@ -129,6 +129,11 @@ export interface Constraints {
    * true=時間帯が重ならなければ同日に複数入れられる。false=1人1日1シフト。
    */
   allowSplitShifts: boolean
+  /**
+   * 分割勤務を積極的に使うか。true=人手に余裕があっても、既に出勤している人に
+   * 2コマ目を優先的に割り当てて少人数で回す。false=足りない時だけ分割を使う。
+   */
+  preferSplitShifts: boolean
   /** ソフト制約の重み */
   weights: {
     /** 出勤回数の公平化 */

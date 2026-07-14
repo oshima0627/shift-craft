@@ -50,6 +50,7 @@ function data(overrides: Partial<AppData> = {}): AppData {
       restIntervalHard: false,
       weeklyHoursCap: 40,
       allowSplitShifts: false,
+      preferSplitShifts: false,
       weights: { fairness: 1, preference: 1, weekendFairness: 1, cost: 0 },
       customRules: [],
       notes: '',

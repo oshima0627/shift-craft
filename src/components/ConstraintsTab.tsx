@@ -141,6 +141,22 @@ export default function ConstraintsTab() {
               </span>
             </label>
           </div>
+          {constraints.allowSplitShifts && (
+            <div className="flex items-start sm:col-span-2 sm:pl-6">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-brand-500"
+                  checked={constraints.preferSplitShifts}
+                  onChange={(e) => updateConstraints({ preferSplitShifts: e.target.checked })}
+                />
+                分割勤務を積極的に使う（少人数で回す）
+                <span className="text-xs text-slate-400">
+                  — ONにすると、人手に余裕があっても同じ人に早番＋遅番を優先的に割り当てます
+                </span>
+              </label>
+            </div>
+          )}
         </div>
       </div>
 

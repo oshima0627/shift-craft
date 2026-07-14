@@ -55,31 +55,36 @@ export default function DayOffCalendar() {
         </p>
       </div>
 
-      <div className="card overflow-x-auto">
-        <table className="border-collapse text-sm">
+      <div className="card">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-[5.5rem]" />
+            {dates.map((d) => (
+              <col key={d} />
+            ))}
+            <col className="w-[2.5rem]" />
+          </colgroup>
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 border-b border-slate-200 bg-white px-2 py-1 text-left">
-                スタッフ
-              </th>
+              <th className="border-b border-slate-200 px-1 py-1 text-left text-xs">スタッフ</th>
               {dates.map((date) => (
                 <th
                   key={date}
-                  className={`border-b border-slate-200 px-0.5 py-1 text-center font-medium ${catClass(date)}`}
+                  className={`border-b border-slate-200 py-1 text-center font-medium ${catClass(date)}`}
                 >
-                  <div className="w-7">{parse(date).getDate()}</div>
+                  <div className="text-xs">{parse(date).getDate()}</div>
                   <div className="text-[10px]">{weekdayLabel(date)}</div>
                 </th>
               ))}
-              <th className="border-b border-slate-200 px-2 py-1 text-center">計</th>
+              <th className="border-b border-slate-200 py-1 text-center text-xs">計</th>
             </tr>
           </thead>
           <tbody>
             {staff.map((st) => {
               const offSet = new Set(st.unavailableDates)
               return (
-                <tr key={st.id} className="hover:bg-slate-50/50">
-                  <td className="sticky left-0 z-10 border-b border-slate-100 bg-white px-2 py-1 font-medium text-slate-700 whitespace-nowrap">
+                <tr key={st.id}>
+                  <td className="border-b border-slate-100 px-1 py-1 font-medium text-slate-700 whitespace-nowrap text-xs">
                     {st.name}
                   </td>
                   {dates.map((date) => {
@@ -88,12 +93,12 @@ export default function DayOffCalendar() {
                     return (
                       <td
                         key={date}
-                        className={`border-b border-l border-slate-100 p-0 text-center ${rest ? 'bg-slate-50' : ''}`}
+                        className={`border-b border-l border-slate-100 p-0 ${rest ? 'bg-slate-50' : ''}`}
                       >
                         <button
                           onClick={() => toggleUnavailable(st.id, date)}
                           title={`${st.name} / ${parse(date).getMonth() + 1}/${parse(date).getDate()}`}
-                          className={`h-7 w-7 text-xs transition-colors ${
+                          className={`flex aspect-square w-full items-center justify-center text-xs transition-colors ${
                             off
                               ? 'bg-red-500 font-bold text-white hover:bg-red-600'
                               : 'text-slate-300 hover:bg-brand-50'
@@ -104,7 +109,7 @@ export default function DayOffCalendar() {
                       </td>
                     )
                   })}
-                  <td className="border-b border-l border-slate-100 px-2 py-1 text-center text-slate-600">
+                  <td className="border-b border-l border-slate-100 py-1 text-center text-slate-600 text-xs">
                     {st.unavailableDates.filter((d) => offSet.has(d) && dates.includes(d)).length}
                   </td>
                 </tr>
@@ -112,13 +117,12 @@ export default function DayOffCalendar() {
             })}
             {/* 日別の希望休人数 */}
             <tr className="bg-slate-50 font-medium">
-              <td className="sticky left-0 z-10 bg-slate-50 px-2 py-1 text-slate-600 whitespace-nowrap">
-                希望休 人数
+              <td className="bg-slate-50 px-1 py-1 text-slate-600 whitespace-nowrap text-xs">
+                希望休人数
               </td>
               {dates.map((date) => {
                 const n = offCountByDate.get(date) ?? 0
                 const ratio = staff.length > 0 ? n / staff.length : 0
-                // 休み希望が集中する日を色で警告（半数以上→赤、1/3以上→橙）
                 const tone =
                   n === 0
                     ? 'text-slate-300'
@@ -128,12 +132,12 @@ export default function DayOffCalendar() {
                         ? 'bg-amber-100 text-amber-700'
                         : 'text-slate-600'
                 return (
-                  <td key={date} className={`border-l border-slate-200 py-1 text-center ${tone}`}>
+                  <td key={date} className={`border-l border-slate-200 py-1 text-center text-xs ${tone}`}>
                     {n || ''}
                   </td>
                 )
               })}
-              <td className="border-l border-slate-200 px-2 py-1 text-center text-slate-500">
+              <td className="border-l border-slate-200 py-1 text-center text-slate-500 text-xs">
                 {staff.reduce((acc, st) => acc + st.unavailableDates.filter((d) => dates.includes(d)).length, 0)}
               </td>
             </tr>
