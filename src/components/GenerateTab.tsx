@@ -6,7 +6,6 @@ import type { Assignment, ScheduleResult } from '../types'
 import { enumerateDates } from '../utils/date'
 import { exportCsv } from '../utils/csv'
 import ScheduleGrid from './ScheduleGrid'
-import CostReport from './CostReport'
 
 export default function GenerateTab() {
   const data = useStore((s) => s.data)
@@ -114,9 +113,6 @@ export default function GenerateTab() {
 
           {/* カレンダー/グリッド */}
           <ScheduleGrid data={data} result={result} onChange={setAssignments} />
-
-          {/* 人件費・生産性 */}
-          <CostReport data={data} assignments={result.assignments} />
 
           {/* 未充足・警告 */}
           {(errors.length > 0 || softWarnings.length > 0) && (

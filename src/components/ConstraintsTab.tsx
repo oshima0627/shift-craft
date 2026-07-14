@@ -280,14 +280,6 @@ export default function ConstraintsTab() {
               updateConstraints({ weights: { ...constraints.weights, preference: v } })
             }
           />
-          <WeightSlider
-            label="人件費の抑制"
-            hint="大きいほど、時給の低いスタッフをやや優先して人件費を抑えます。"
-            value={constraints.weights.cost}
-            onChange={(v) =>
-              updateConstraints({ weights: { ...constraints.weights, cost: v } })
-            }
-          />
         </div>
       </div>
 

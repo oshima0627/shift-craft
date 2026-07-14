@@ -95,7 +95,6 @@ function StaffRow({ staff }: { staff: Staff }) {
         {staff.isMinor && (
           <span className="chip bg-purple-100 text-purple-700">18歳未満</span>
         )}
-        <span className="chip bg-slate-100 text-slate-600">¥{staff.hourlyWage}</span>
         <div className="flex flex-1 flex-wrap gap-1">
           {staff.roleIds.map((rid) => {
             const role = roles.find((r) => r.id === rid)
@@ -161,18 +160,6 @@ function StaffRow({ staff }: { staff: Staff }) {
               <option value={1}>一般</option>
               <option value={2}>ベテラン</option>
             </select>
-          </div>
-
-          <div>
-            <label className="label">時給（円）</label>
-            <input
-              type="number"
-              min={0}
-              step={10}
-              className="input"
-              value={staff.hourlyWage}
-              onChange={(e) => updateStaff(staff.id, { hourlyWage: Math.max(0, Number(e.target.value)) })}
-            />
           </div>
 
           <div className="flex items-end pb-1">

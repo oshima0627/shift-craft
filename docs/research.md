@@ -92,10 +92,8 @@
 | 週1休＝最大6日（35条） | ソルバー H9 + 連勤上限デフォルト6（`maxConsecutiveDefault`） |
 | 勤務間インターバル9〜11h / クローピング回避 | `Constraints.restIntervalHours` + H10（ハード/ソフト切替）+ 検証エンジン |
 | 新人だけにしない | `minExperiencedPerShift`（既存）+ 検証エンジン |
-| 人件費率25〜30% / FL60% / 人時売上高4,000円 | `src/solver/cost.ts` + 生成タブの「人件費・生産性」パネル |
-| 法定福利費 約15% | `CostSettings.includeWelfare` |
+| 人件費率25〜30% / FL60% / 人時売上高4,000円 / 法定福利費15% | `src/solver/cost.ts`（エンジン実装済み。UIは現在非表示 — 不要との判断による） |
 | 土日祝の公平化・希望反映と定着率 | ソフト制約 S1〜S3（重みスライダー） |
-| 人件費の抑制（モデルシフト思考） | ソフト制約 S4 + 売上目標からの人件費率チェック |
 | 自然文の条件入力（LLMの代替） | `src/utils/ruleParser.ts`（正規表現ベース、AI不使用） |
 | 手動編集後も同じ基準で検証 | `src/solver/compliance.ts` `validateSchedule()` |
 
