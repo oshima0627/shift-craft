@@ -25,6 +25,7 @@ export default function BusynessCalendar() {
   const removeBusynessLevel = useStore((s) => s.removeBusynessLevel)
   const setDefaultBusynessLevel = useStore((s) => s.setDefaultBusynessLevel)
   const setWeekendBusynessLevel = useStore((s) => s.setWeekendBusynessLevel)
+  const setWeekendsToLevel = useStore((s) => s.setWeekendsToLevel)
 
   const [year, month] = useMemo(() => {
     const [y, m] = period.start.split('-').map(Number)
@@ -159,6 +160,16 @@ export default function BusynessCalendar() {
           </div>
           <button className="btn-ghost" onClick={nextMonth}>
             翌月 ▶
+          </button>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            className="btn-ghost text-xs"
+            onClick={() => setWeekendsToLevel()}
+            title="この月の土日祝をすべて『土日祝の既定』段階にします"
+          >
+            土日祝をすべて「{levelById.get(weekendDefault)?.name ?? '忙しい'}」にする
           </button>
         </div>
 

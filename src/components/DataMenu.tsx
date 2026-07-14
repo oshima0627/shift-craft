@@ -13,6 +13,7 @@ export default function DataMenu() {
   const data = useStore((s) => s.data)
   const importData = useStore((s) => s.importData)
   const resetData = useStore((s) => s.resetData)
+  const loadSampleData = useStore((s) => s.loadSampleData)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -144,6 +145,19 @@ export default function DataMenu() {
               ⬆️ 設定をインポート
             </button>
             <div className="my-1 border-t border-slate-100" />
+            <button
+              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100"
+              onClick={() => {
+                if (
+                  confirm('従業員15人のテストデータを投入しますか？現在の設定は置き換わります。')
+                ) {
+                  loadSampleData()
+                  setOpen(false)
+                }
+              }}
+            >
+              🧪 テストデータ投入（15人）
+            </button>
             <button
               className="block w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
               onClick={() => {

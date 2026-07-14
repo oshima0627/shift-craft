@@ -10,6 +10,7 @@ import ScheduleGrid from './ScheduleGrid'
 
 export default function GenerateTab() {
   const data = useStore((s) => s.data)
+  const updatePeriod = useStore((s) => s.updatePeriod)
   const [result, setResult] = useState<ScheduleResult | null>(null)
   const [generating, setGenerating] = useState(false)
 
@@ -63,9 +64,28 @@ export default function GenerateTab() {
         </div>
       </div>
 
-      <div className="no-print text-sm text-slate-500">
-        対象期間: {data.period.start} 〜 {data.period.end}（{dates.length}日）/ スタッフ{' '}
-        {data.staff.length}名
+      <div className="no-print card flex flex-wrap items-end gap-3">
+        <div>
+          <label className="label">作成する期間（開始）</label>
+          <input
+            type="date"
+            className="input"
+            value={data.period.start}
+            onChange={(e) => updatePeriod({ start: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="label">作成する期間（終了）</label>
+          <input
+            type="date"
+            className="input"
+            value={data.period.end}
+            onChange={(e) => updatePeriod({ end: e.target.value })}
+          />
+        </div>
+        <div className="text-sm text-slate-500">
+          {dates.length}日間 / スタッフ {data.staff.length}名
+        </div>
       </div>
 
       {preflightIssues.length > 0 && (

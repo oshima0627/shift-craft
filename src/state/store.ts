@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { dayCategoryOf, enumerateDates } from '../utils/date'
 import type {
   AppData,
   BusynessLevel,
@@ -98,6 +99,101 @@ function defaultBusynessLevels(): BusynessLevel[] {
     { id: 'busy_mid', name: '普通', color: '#a7b3c2' },
     { id: 'busy_high', name: '忙しい', color: '#e08a8a' },
   ]
+}
+
+/** 15人ぶんのテストデータ（デモ・動作確認用） */
+function sampleData(): AppData {
+  const roles: Role[] = [
+    { id: 'role_hall', name: 'ホール', color: '#3b6fe0' },
+    { id: 'role_kitchen', name: 'キッチン', color: '#e0733b' },
+    { id: 'role_register', name: 'レジ', color: '#8b5cf6' },
+  ]
+  // 早番と遅番は時間帯が重ならない（分割勤務が可能）
+  const shifts: ShiftType[] = [
+    { id: 'shift_early', name: '早番', start: '09:00', end: '16:00' },
+    { id: 'shift_late', name: '遅番', start: '16:00', end: '23:00' },
+  ]
+
+  // 15人（氏名 / 担当役割 / 経験レベル / 時給 / 18歳未満）
+  const defs: [string, string[], 0 | 1 | 2, number, boolean][] = [
+    ['佐藤', ['role_hall', 'role_register'], 2, 1350, false],
+    ['鈴木', ['role_kitchen'], 2, 1400, false],
+    ['高橋', ['role_hall'], 1, 1200, false],
+    ['田中', ['role_kitchen', 'role_hall'], 1, 1250, false],
+    ['伊藤', ['role_register'], 1, 1150, false],
+    ['渡辺', ['role_hall'], 0, 1050, true],
+    ['山本', ['role_kitchen'], 2, 1380, false],
+    ['中村', ['role_hall', 'role_register'], 1, 1200, false],
+    ['小林', ['role_kitchen'], 0, 1050, false],
+    ['加藤', ['role_hall'], 1, 1180, false],
+    ['吉田', ['role_register', 'role_hall'], 2, 1300, false],
+    ['山田', ['role_kitchen', 'role_hall'], 1, 1220, false],
+    ['佐々木', ['role_hall'], 0, 1000, true],
+    ['山口', ['role_register'], 1, 1150, false],
+    ['松本', ['role_kitchen'], 1, 1230, false],
+  ]
+
+  const period = firstOfNextMonthPeriod()
+  const ym = period.start.slice(0, 7) // "yyyy-MM"
+  // 一部スタッフに希望休を付与（当月内の日付）
+  const dayOff: Record<string, string[]> = {
+    佐藤: [`${ym}-07`, `${ym}-21`],
+    高橋: [`${ym}-05`, `${ym}-06`],
+    伊藤: [`${ym}-14`],
+    小林: [`${ym}-10`, `${ym}-24`],
+    吉田: [`${ym}-18`],
+    松本: [`${ym}-03`, `${ym}-17`],
+  }
+
+  let seq = 0
+  const staff: Staff[] = defs.map(([name, roleIds, level, wage, minor]) => {
+    seq++
+    return {
+      id: `staff_sample_${seq}`,
+      name,
+      roleIds,
+      level,
+      hourlyWage: wage,
+      isMinor: minor,
+      maxShifts: null,
+      maxConsecutive: 5,
+      weeklyMaxHours: null,
+      weeklyMaxDays: null,
+      unavailableDates: dayOff[name] ?? [],
+      allowedShiftIds: [],
+    }
+  })
+
+  const levels = defaultBusynessLevels()
+  // 必要人数（暇/普通/忙しい）。忙しいほど厚く
+  const req = (roleId: string, shiftId: string, low: number, mid: number, high: number): Requirement => ({
+    roleId,
+    shiftId,
+    counts: { busy_low: low, busy_mid: mid, busy_high: high },
+  })
+  const requirements: Requirement[] = [
+    req('role_hall', 'shift_early', 1, 2, 3),
+    req('role_hall', 'shift_late', 1, 2, 3),
+    req('role_kitchen', 'shift_early', 1, 1, 2),
+    req('role_kitchen', 'shift_late', 1, 2, 2),
+    req('role_register', 'shift_early', 1, 1, 1),
+    req('role_register', 'shift_late', 1, 1, 2),
+  ]
+
+  return {
+    roles,
+    shifts,
+    staff,
+    busynessLevels: levels,
+    defaultBusynessLevelId: 'busy_mid',
+    weekendBusynessLevelId: 'busy_high',
+    dayBusyness: {},
+    requirements,
+    overrides: [],
+    constraints: defaultConstraints(),
+    cost: defaultCost(),
+    period,
+  }
 }
 
 let staffSeq = 0
@@ -249,6 +345,8 @@ interface StoreState {
   setDefaultBusynessLevel: (id: string) => void
   setWeekendBusynessLevel: (id: string) => void
   setDayBusyness: (date: string, levelId: string) => void
+  /** 対象期間内の土日祝をすべて指定段階（既定=土日祝既定）にする */
+  setWeekendsToLevel: (levelId?: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
   // --- 特定日の上書き ---
@@ -263,6 +361,7 @@ interface StoreState {
   // --- 全体 ---
   importData: (data: AppData) => void
   resetData: () => void
+  loadSampleData: () => void
 }
 
 export const useStore = create<StoreState>()(
@@ -478,8 +577,22 @@ export const useStore = create<StoreState>()(
       updatePeriod: (patch) =>
         set((s) => ({ data: { ...s.data, period: { ...s.data.period, ...patch } } })),
 
+      setWeekendsToLevel: (levelId) =>
+        set((s) => {
+          const target = levelId ?? s.data.weekendBusynessLevelId
+          const dates = enumerateDates(s.data.period)
+          const dayBusyness = { ...s.data.dayBusyness }
+          for (const d of dates) {
+            if (dayCategoryOf(d, s.data.period.holidays) !== 'weekday') {
+              dayBusyness[d] = target
+            }
+          }
+          return { data: { ...s.data, dayBusyness } }
+        }),
+
       importData: (data) => set(() => ({ data: normalizeData(data) })),
       resetData: () => set(() => ({ data: defaultData() })),
+      loadSampleData: () => set(() => ({ data: sampleData() })),
     }),
     {
       name: 'shiftcraft-data-v1',
