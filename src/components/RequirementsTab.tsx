@@ -22,23 +22,25 @@ export default function RequirementsTab() {
 
   if (roles.length === 0 || shifts.length === 0) {
     return (
-      <p className="text-sm text-slate-500">先に「役割」と「時間帯」を登録してください。</p>
+      <p className="text-base text-slate-500">先に「役割」と「時間帯」を登録してください。</p>
     )
   }
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-bold text-slate-700">必要人数</h2>
-      <p className="text-sm text-slate-500">
-        役割 × 時間帯ごとに、<b>忙しさ段階</b>別の必要人数を設定します。各日の忙しさは「忙しさ」タブで設定します。
-      </p>
+      <div className="space-y-1">
+        <h2 className="page-title">必要人数</h2>
+        <p className="page-desc">
+          役割 × 時間帯ごとに、<b>忙しさ段階</b>別の必要人数を設定します。各日の忙しさは「忙しさ」タブで設定します。
+        </p>
+      </div>
 
       <div className="space-y-5">
         {shifts.map((shift) => (
           <div key={shift.id} className="card">
-            <h3 className="mb-3 text-sm font-bold text-slate-700">
+            <h3 className="mb-3 section-title">
               🕒 {shift.name}
-              <span className="ml-2 text-xs font-normal text-slate-400">
+              <span className="ml-2 text-sm font-normal text-slate-400">
                 {shift.start}〜{shift.end}
               </span>
             </h3>
@@ -50,7 +52,7 @@ export default function RequirementsTab() {
                     {levels.map((l) => (
                       <th key={l.id} className="pb-2 text-center font-medium">
                         <span
-                          className="inline-block rounded px-2 py-0.5 text-xs text-white"
+                          className="inline-block rounded-md px-2.5 py-1 text-sm text-white"
                           style={{ backgroundColor: l.color }}
                         >
                           {l.name}
@@ -123,9 +125,9 @@ function OverridesCard() {
 
   return (
     <div className="card space-y-3">
-      <div>
-        <h3 className="text-sm font-bold text-slate-700">📌 特定日の人数上書き</h3>
-        <p className="text-xs text-slate-500">
+      <div className="space-y-1">
+        <h3 className="section-title">📌 特定日の人数上書き</h3>
+        <p className="section-desc">
           イベント日など「この日は◯人」を指定できます。忙しさ段階の設定より優先されます（0人で「この日はこの枠なし」も可）。
         </p>
       </div>
@@ -176,7 +178,7 @@ function OverridesCard() {
             </button>
           </span>
         ))}
-        {overrides.length === 0 && <span className="text-xs text-slate-400">上書きはありません。</span>}
+        {overrides.length === 0 && <span className="text-sm text-slate-400">上書きはありません。</span>}
       </div>
     </div>
   )

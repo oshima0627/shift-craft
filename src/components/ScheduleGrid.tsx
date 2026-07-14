@@ -76,9 +76,9 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
         <tbody>
           {data.staff.map((st) => (
             <tr key={st.id} className="hover:bg-slate-50/50">
-              <td className="sticky left-0 z-10 whitespace-nowrap border-b border-slate-100 bg-white px-2 py-1 font-medium">
+              <td className="sticky left-0 z-10 whitespace-nowrap border-b border-slate-100 bg-white px-2 py-1 text-base font-semibold">
                 {st.name}
-                {st.level === 0 && <span className="ml-1 text-[10px] text-amber-500">新</span>}
+                {st.level === 0 && <span className="ml-1 text-[11px] text-amber-500">新</span>}
               </td>
               {dates.map((date) => {
                 const cells = cellsOf(st.id, date)
@@ -116,7 +116,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
                           return (
                             <span
                               key={i}
-                              className="w-full truncate rounded px-0.5 text-[10px] font-semibold text-white"
+                              className="w-full truncate rounded px-1 py-0.5 text-[11px] font-semibold text-white"
                               style={{ backgroundColor: role?.color ?? '#64748b' }}
                             >
                               {shift?.name ?? '○'}
@@ -125,14 +125,14 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
                         })}
                       </div>
                     ) : unavailable ? (
-                      <span className="text-[9px] font-medium text-red-400">{leaveName ?? '休'}</span>
+                      <span className="text-[11px] font-semibold text-red-400">{leaveName ?? '休'}</span>
                     ) : (
-                      <span className="text-slate-200">·</span>
+                      <span className="text-slate-300">·</span>
                     )}
                   </td>
                 )
               })}
-              <td className="border-b border-l border-slate-100 px-2 py-1 text-center font-semibold text-slate-600">
+              <td className="border-b border-l border-slate-100 px-2 py-1 text-center text-base font-bold text-slate-700">
                 {result.staffLoad[st.id] ?? 0}
               </td>
             </tr>
@@ -196,18 +196,18 @@ function CellEditor({
       className="no-print fixed inset-0 z-20 flex items-center justify-center bg-black/30 p-4"
       onClick={onClose}
     >
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-1 text-sm font-bold text-slate-700">
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-1 text-lg font-bold text-slate-800">
           {staff.name} / {parse(date).getMonth() + 1}月{parse(date).getDate()}日
         </h3>
-        <p className="mb-3 text-xs text-slate-400">
+        <p className="mb-4 text-sm text-slate-400">
           複数追加すると同じ日に分割勤務（早番＋遅番など）を割り当てられます。
         </p>
         {staffRoles.length === 0 ? (
-          <p className="text-sm text-red-500">このスタッフは役割が未設定です。</p>
+          <p className="text-base text-red-500">このスタッフは役割が未設定です。</p>
         ) : (
           <div className="space-y-2">
-            {rows.length === 0 && <p className="text-sm text-slate-400">割り当てなし（休み）。</p>}
+            {rows.length === 0 && <p className="text-base text-slate-400">割り当てなし（休み）。</p>}
             {rows.map((row, i) => (
               <div key={i} className="flex items-center gap-2">
                 <select

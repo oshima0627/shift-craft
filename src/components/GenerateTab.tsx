@@ -46,8 +46,8 @@ export default function GenerateTab() {
   return (
     <div className="space-y-4">
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-bold text-slate-700">シフト生成</h2>
-        <div className="flex gap-2">
+        <h2 className="page-title">シフト生成</h2>
+        <div className="flex flex-wrap gap-2">
           {result && (
             <>
               <button className="btn-ghost" onClick={() => window.print()}>
@@ -58,7 +58,11 @@ export default function GenerateTab() {
               </button>
             </>
           )}
-          <button className="btn-primary" onClick={handleGenerate} disabled={generating}>
+          <button
+            className="btn-primary px-6 text-lg"
+            onClick={handleGenerate}
+            disabled={generating}
+          >
             {generating ? '生成中…' : '✨ シフトを生成'}
           </button>
         </div>
@@ -97,7 +101,7 @@ export default function GenerateTab() {
       )}
 
       {!result && (
-        <div className="card text-center text-slate-400">
+        <div className="card py-10 text-center text-lg text-slate-400">
           「シフトを生成」を押すと、条件を満たす最適なシフト表を作成します。
         </div>
       )}
@@ -242,9 +246,9 @@ function SummaryCard({
     slate: 'text-slate-600',
   }
   return (
-    <div className="card">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className={`text-xl font-bold ${tones[tone]}`}>{value}</p>
+    <div className="card p-4">
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className={`text-2xl font-bold ${tones[tone]}`}>{value}</p>
     </div>
   )
 }

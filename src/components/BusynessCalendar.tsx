@@ -59,9 +59,9 @@ export default function BusynessCalendar() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-base font-bold text-slate-700">忙しさカレンダー</h2>
-        <p className="text-sm text-slate-500">
+      <div className="space-y-1">
+        <h2 className="page-title">忙しさカレンダー</h2>
+        <p className="page-desc">
           月を切り替えて対象期間を決め、各日の忙しさをクリックで設定します（クリックで次の段階へ）。
           個別に設定していない日は自動判定（土日祝・祝日＝最も忙しい／平日＝中間）。祝日は自動で判定します。
         </p>
@@ -70,8 +70,8 @@ export default function BusynessCalendar() {
       {/* 忙しさ段階エディタ */}
       <div className="card space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-700">忙しさの段階（可変）</h3>
-          <button className="btn-ghost text-sm" onClick={addBusynessLevel}>
+          <h3 className="section-title">忙しさの段階（可変）</h3>
+          <button className="btn-ghost btn-sm" onClick={addBusynessLevel}>
             ＋ 段階を追加
           </button>
         </div>
@@ -109,7 +109,7 @@ export default function BusynessCalendar() {
           <button className="btn-ghost" onClick={prevMonth}>
             ◀ 前月
           </button>
-          <div className="text-base font-bold text-slate-700">
+          <div className="text-xl font-bold text-slate-800">
             {year}年 {month + 1}月
           </div>
           <button className="btn-ghost" onClick={nextMonth}>
@@ -121,7 +121,7 @@ export default function BusynessCalendar() {
           {WEEKDAY_LABELS.map((w, i) => (
             <div
               key={w}
-              className={`py-1 text-center text-xs font-semibold ${
+              className={`py-1 text-center text-sm font-semibold ${
                 i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-slate-500'
               }`}
             >
@@ -137,16 +137,16 @@ export default function BusynessCalendar() {
               <button
                 key={date}
                 onClick={() => cycleDay(date)}
-                className="flex h-20 flex-col items-center justify-center rounded-md border border-slate-200 text-sm font-medium transition hover:ring-2 hover:ring-brand-400"
+                className="flex h-20 flex-col items-center justify-center rounded-lg border border-slate-200 text-base font-medium transition hover:ring-2 hover:ring-brand-400"
                 style={{ backgroundColor: level ? level.color + '55' : undefined }}
                 title="クリックで次の忙しさ段階へ"
               >
-                <span className="text-slate-700">
+                <span className="text-base font-semibold text-slate-800">
                   {day}
-                  {holiday && <span className="ml-0.5 text-[10px] text-red-500">祝</span>}
+                  {holiday && <span className="ml-0.5 text-[11px] text-red-500">祝</span>}
                 </span>
                 <span
-                  className="mt-0.5 rounded px-1 text-[10px] text-white"
+                  className="mt-0.5 rounded px-1.5 text-[11px] font-semibold text-white"
                   style={{ backgroundColor: level?.color }}
                 >
                   {level?.name ?? ''}
@@ -156,9 +156,9 @@ export default function BusynessCalendar() {
           })}
         </div>
 
-        <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-4 text-sm text-slate-500">
           {levels.map((l) => (
-            <span key={l.id} className="flex items-center gap-1">
+            <span key={l.id} className="flex items-center gap-1.5">
               <span className="inline-block h-4 w-4 rounded" style={{ backgroundColor: l.color }} />
               {l.name}
             </span>
@@ -166,7 +166,7 @@ export default function BusynessCalendar() {
         </div>
       </div>
 
-      <div className="text-xs text-slate-400">
+      <div className="text-sm text-slate-400">
         対象期間: {period.start} 〜 {period.end}
       </div>
     </div>

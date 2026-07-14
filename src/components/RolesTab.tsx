@@ -18,10 +18,12 @@ export default function RolesTab() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-bold text-slate-700">役割（ロール）</h2>
-      <p className="text-sm text-slate-500">
-        例: ホール、キッチン、レジ など。スタッフはここで定義した役割を担当できます。
-      </p>
+      <div className="space-y-1">
+        <h2 className="page-title">役割（ロール）</h2>
+        <p className="page-desc">
+          例: ホール、キッチン、レジ など。スタッフはここで定義した役割を担当できます。
+        </p>
+      </div>
 
       <div className="card flex gap-2">
         <input
@@ -36,12 +38,12 @@ export default function RolesTab() {
         </button>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         {roles.map((role) => (
           <div key={role.id} className="card flex items-center gap-3">
             <input
               type="color"
-              className="h-8 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
+              className="h-10 w-10 shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-transparent p-0.5"
               value={role.color}
               onChange={(e) => updateRole(role.id, { color: e.target.value })}
             />
@@ -62,7 +64,7 @@ export default function RolesTab() {
           </div>
         ))}
         {roles.length === 0 && (
-          <p className="text-sm text-slate-400">役割がありません。追加してください。</p>
+          <p className="text-base text-slate-400">役割がありません。追加してください。</p>
         )}
       </div>
     </div>

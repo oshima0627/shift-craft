@@ -54,9 +54,9 @@ export default function DayOffCalendar() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-base font-bold text-slate-700">希望休カレンダー</h2>
-        <p className="text-sm text-slate-500">
+      <div className="space-y-1">
+        <h2 className="page-title">希望休カレンダー</h2>
+        <p className="page-desc">
           マスをクリックすると休みの種類が切り替わります（なし → {leaveTypes.map((t) => t.name).join(' → ')} → なし）。
           時間休はその時間帯に重なるシフトにだけ入れなくなります。期間: {period.start} 〜 {period.end}。
         </p>
@@ -65,8 +65,8 @@ export default function DayOffCalendar() {
       {/* 休みの種類エディタ */}
       <div className="card space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-700">休みの種類（可変）</h3>
-          <button className="btn-ghost text-sm" onClick={addLeaveType}>
+          <h3 className="section-title">休みの種類（可変）</h3>
+          <button className="btn-ghost btn-sm" onClick={addLeaveType}>
             ＋ 時間休を追加
           </button>
         </div>
@@ -112,13 +112,13 @@ export default function DayOffCalendar() {
             )
           })}
         </div>
-        <p className="text-xs text-slate-400">
+        <p className="text-sm text-slate-400">
           例: 午前休 9:00〜15:00 / 午後休 17:00〜21:00。全休（終日）はすべてのシフトに掛かります。
         </p>
       </div>
 
       {dates.length === 0 || staff.length === 0 ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-base text-slate-500">
           スタッフと対象期間（忙しさタブ）を設定すると、ここに希望休カレンダーが表示されます。
         </p>
       ) : (
@@ -184,7 +184,7 @@ export default function DayOffCalendar() {
                                 ? `${st.name} / ${t.name}${full ? '' : `（${t.start}〜${t.end}）`}`
                                 : `${st.name} / ${parse(date).getMonth() + 1}/${parse(date).getDate()}`
                             }
-                            className={`flex aspect-square w-full items-center justify-center text-[9px] font-bold transition-colors ${
+                            className={`flex aspect-square w-full min-w-[1.75rem] items-center justify-center text-[11px] font-bold transition-colors ${
                               t
                                 ? full
                                   ? 'bg-red-500 text-white hover:bg-red-600'
@@ -232,11 +232,11 @@ export default function DayOffCalendar() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-        <span className="flex items-center gap-1">
+      <div className="flex flex-wrap gap-4 text-sm text-slate-500">
+        <span className="flex items-center gap-1.5">
           <span className="inline-block h-4 w-4 rounded bg-red-500" /> 全休
         </span>
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-1.5">
           <span className="inline-block h-4 w-4 rounded bg-amber-400" /> 時間休
         </span>
       </div>

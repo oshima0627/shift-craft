@@ -53,10 +53,12 @@ export default function ShiftsTab() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-bold text-slate-700">シフト時間帯</h2>
-      <p className="text-sm text-slate-500">
-        例: 早番 09:00〜17:00、遅番 13:00〜22:00 など。開始・終了時刻を細かく設定できます。
-      </p>
+      <div className="space-y-1">
+        <h2 className="page-title">シフト時間帯</h2>
+        <p className="page-desc">
+          例: 早番 09:00〜17:00、遅番 13:00〜22:00 など。開始・終了時刻を細かく設定できます。
+        </p>
+      </div>
 
       <div className="card flex gap-2">
         <input
@@ -114,7 +116,7 @@ export default function ShiftsTab() {
           </div>
         ))}
         {shifts.length === 0 && (
-          <p className="text-sm text-slate-400">時間帯がありません。追加してください。</p>
+          <p className="text-base text-slate-400">時間帯がありません。追加してください。</p>
         )}
       </div>
     </div>
