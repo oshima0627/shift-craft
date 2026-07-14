@@ -2,9 +2,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// GitHub Pages などのサブパス配信に対応するため base は相対指定
+// Cloudflare Workers（ドメイン直下）配信。パスベースのルーティングのため base は絶対
 export default defineConfig({
-  base: './',
+  base: '/',
   plugins: [react()],
   test: {
     environment: 'node',
