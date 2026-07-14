@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useStore } from '../state/store'
 import { dayCategoryOf, enumerateDates, parse, weekdayLabel } from '../utils/date'
+import { busynessOf } from '../utils/busyness'
 
 /**
  * 希望休カレンダー。
@@ -11,6 +12,7 @@ import { dayCategoryOf, enumerateDates, parse, weekdayLabel } from '../utils/dat
 export default function DayOffCalendar() {
   const staff = useStore((s) => s.data.staff)
   const period = useStore((s) => s.data.period)
+  const data = useStore((s) => s.data)
   const toggleUnavailable = useStore((s) => s.toggleUnavailable)
 
   const dates = useMemo(() => enumerateDates(period), [period])
@@ -77,6 +79,23 @@ export default function DayOffCalendar() {
                 </th>
               ))}
               <th className="border-b border-slate-200 py-1 text-center text-xs">計</th>
+            </tr>
+            {/* 忙しさの色 */}
+            <tr>
+              <th className="px-1 py-0.5 text-right text-[10px] font-normal text-slate-400">忙しさ</th>
+              {dates.map((date) => {
+                const level = busynessOf(data, date)
+                return (
+                  <th key={date} className="p-0">
+                    <div
+                      className="h-2 w-full"
+                      style={{ backgroundColor: level?.color }}
+                      title={level?.name}
+                    />
+                  </th>
+                )
+              })}
+              <th />
             </tr>
           </thead>
           <tbody>

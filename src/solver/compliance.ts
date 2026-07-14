@@ -1,5 +1,5 @@
 import type { AppData, Assignment, Unfilled, Warning } from '../types'
-import { dayCategoryOf, displayDate, enumerateDates } from '../utils/date'
+import { displayDate, enumerateDates } from '../utils/date'
 import { neededCount } from '../utils/requirements'
 import type { ShiftType } from '../types'
 import {
@@ -42,11 +42,10 @@ export function validateSchedule(
     countByKey.set(key, (countByKey.get(key) ?? 0) + 1)
   }
   for (const date of dates) {
-    const category = dayCategoryOf(date, data.period.holidays)
     for (const role of data.roles) {
       for (const shift of data.shifts) {
-        // 特定日の上書き ＞ 曜日区分 で必要人数を解決
-        const needed = neededCount(data, date, category, role.id, shift.id)
+        // 特定日の上書き ＞ 忙しさ段階 で必要人数を解決
+        const needed = neededCount(data, date, role.id, shift.id)
         if (needed <= 0) continue
         const filled = countByKey.get(`${date}|${shift.id}|${role.id}`) ?? 0
         if (filled < needed) {

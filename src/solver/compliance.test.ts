@@ -40,6 +40,13 @@ function data(overrides: Partial<AppData> = {}): AppData {
         allowedShiftIds: [],
       },
     ],
+    busynessLevels: [
+      { id: 'low', name: '暇', color: '#86c9a0' },
+      { id: 'mid', name: '普通', color: '#a7b3c2' },
+      { id: 'high', name: '忙しい', color: '#e08a8a' },
+    ],
+    defaultBusynessLevelId: 'mid',
+    dayBusyness: {},
     requirements: [],
     overrides: [],
     constraints: {
@@ -107,13 +114,8 @@ describe('validateSchedule（法令チェックエンジン）', () => {
 
   it('人数不足を検出する', () => {
     const d = data({
-      requirements: [
-        {
-          roleId: 'r1',
-          shiftId: 'early',
-          counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 },
-        },
-      ],
+      requirements: [{ roleId: 'r1', shiftId: 'early', counts: { low: 1, mid: 1, high: 1 } }],
+      // 2026-08-03 は既定段階 'mid' → mid:1 が要求される
       period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
     })
     const { unfilled } = validateSchedule(d, [])

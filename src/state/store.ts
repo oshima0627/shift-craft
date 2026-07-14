@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
   AppData,
+  BusynessLevel,
   Constraints,
   CostSettings,
   PeriodSettings,
@@ -63,11 +64,14 @@ function defaultData(): AppData {
     mkStaff('伊藤', ['role_kitchen'], 0, { hourlyWage: 1100 }),
   ]
 
+  // 忙しさ段階（低→高）。既定は3段階
+  const levels = defaultBusynessLevels()
+
   const requirements: Requirement[] = [
-    { roleId: 'role_hall', shiftId: 'shift_early', counts: { weekday: 1, saturday: 2, sunday: 2, holiday: 2 } },
-    { roleId: 'role_hall', shiftId: 'shift_late', counts: { weekday: 1, saturday: 2, sunday: 2, holiday: 2 } },
-    { roleId: 'role_kitchen', shiftId: 'shift_early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-    { roleId: 'role_kitchen', shiftId: 'shift_late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+    { roleId: 'role_hall', shiftId: 'shift_early', counts: { busy_low: 1, busy_mid: 1, busy_high: 2 } },
+    { roleId: 'role_hall', shiftId: 'shift_late', counts: { busy_low: 1, busy_mid: 1, busy_high: 2 } },
+    { roleId: 'role_kitchen', shiftId: 'shift_early', counts: { busy_low: 1, busy_mid: 1, busy_high: 1 } },
+    { roleId: 'role_kitchen', shiftId: 'shift_late', counts: { busy_low: 1, busy_mid: 1, busy_high: 1 } },
   ]
 
   const period: PeriodSettings = firstOfNextMonthPeriod()
@@ -76,12 +80,23 @@ function defaultData(): AppData {
     roles: [r1, r2],
     shifts: [s1, s2],
     staff,
+    busynessLevels: levels,
+    defaultBusynessLevelId: 'busy_mid',
+    dayBusyness: {},
     requirements,
     overrides: [],
     constraints: defaultConstraints(),
     cost: defaultCost(),
     period,
   }
+}
+
+function defaultBusynessLevels(): BusynessLevel[] {
+  return [
+    { id: 'busy_low', name: '暇', color: '#86c9a0' },
+    { id: 'busy_mid', name: '普通', color: '#a7b3c2' },
+    { id: 'busy_high', name: '忙しい', color: '#e08a8a' },
+  ]
 }
 
 let staffSeq = 0
@@ -141,16 +156,65 @@ export function normalizeData(raw: unknown): AppData {
     weeklyMaxHours: s.weeklyMaxHours ?? null,
     weeklyMaxDays: s.weeklyMaxDays ?? null,
   }))
+
+  // 忙しさ段階（無ければ既定3段階を補完）
+  const busynessLevels: BusynessLevel[] =
+    Array.isArray(d.busynessLevels) && d.busynessLevels.length > 0
+      ? d.busynessLevels
+      : base.busynessLevels
+  const levelIds = new Set(busynessLevels.map((l) => l.id))
+  const defaultBusynessLevelId =
+    d.defaultBusynessLevelId && levelIds.has(d.defaultBusynessLevelId)
+      ? d.defaultBusynessLevelId
+      : (busynessLevels.find((l) => l.id === 'busy_mid')?.id ??
+        busynessLevels[Math.floor(busynessLevels.length / 2)]?.id ??
+        busynessLevels[0]?.id ??
+        '')
+
+  // 必要人数: 旧スキーマ（曜日区分キー）を忙しさ段階キーへ移行
+  const requirements: Requirement[] = (d.requirements ?? base.requirements).map((r) =>
+    migrateRequirementCounts(r, busynessLevels),
+  )
+
   return {
     roles: d.roles ?? base.roles,
     shifts: d.shifts ?? base.shifts,
     staff,
-    requirements: d.requirements ?? base.requirements,
+    busynessLevels,
+    defaultBusynessLevelId,
+    dayBusyness: d.dayBusyness ?? {},
+    requirements,
     overrides: d.overrides ?? [],
     constraints,
     cost,
     period: { ...base.period, ...(d.period ?? {}) },
   }
+}
+
+/**
+ * 旧 Requirement.counts（weekday/saturday/sunday/holiday）を
+ * 忙しさ段階キーへ変換する。既に段階キーならそのまま。
+ */
+function migrateRequirementCounts(r: Requirement, levels: BusynessLevel[]): Requirement {
+  const counts = (r.counts ?? {}) as Record<string, number>
+  const looksOld =
+    'weekday' in counts || 'saturday' in counts || 'sunday' in counts || 'holiday' in counts
+  if (!looksOld) {
+    // 段階キーのうち欠けているものは0で補完
+    const filled: Record<string, number> = {}
+    for (const l of levels) filled[l.id] = Math.max(0, counts[l.id] ?? 0)
+    return { ...r, counts: filled }
+  }
+  const weekday = counts.weekday ?? 0
+  const weekendMax = Math.max(counts.saturday ?? 0, counts.sunday ?? 0, counts.holiday ?? 0)
+  const next: Record<string, number> = {}
+  levels.forEach((l, i) => {
+    // 低=平日の半分程度、中=平日、高=土日祝の最大 を目安に割り当て
+    if (i === 0) next[l.id] = Math.max(0, Math.round(weekday / 2) || weekday)
+    else if (i === levels.length - 1) next[l.id] = Math.max(weekday, weekendMax)
+    else next[l.id] = weekday
+  })
+  return { ...r, counts: next }
 }
 
 interface StoreState {
@@ -169,6 +233,12 @@ interface StoreState {
   removeStaff: (id: string) => void
   /** 希望休（出勤不可日）の1日分をトグルする */
   toggleUnavailable: (staffId: string, date: string) => void
+  // --- 忙しさ段階 ---
+  addBusynessLevel: () => void
+  updateBusynessLevel: (id: string, patch: Partial<BusynessLevel>) => void
+  removeBusynessLevel: (id: string) => void
+  setDefaultBusynessLevel: (id: string) => void
+  setDayBusyness: (date: string, levelId: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
   // --- 特定日の上書き ---
@@ -297,6 +367,53 @@ export const useStore = create<StoreState>()(
               }
             }),
           },
+        })),
+
+      addBusynessLevel: () =>
+        set((s) => {
+          const palette = ['#86c9a0', '#a7b3c2', '#e0b062', '#e08a8a', '#8a9ce0', '#b98ae0']
+          const color = palette[s.data.busynessLevels.length % palette.length]
+          const level: BusynessLevel = {
+            id: newId('busy'),
+            name: `段階${s.data.busynessLevels.length + 1}`,
+            color,
+          }
+          return { data: { ...s.data, busynessLevels: [...s.data.busynessLevels, level] } }
+        }),
+      updateBusynessLevel: (id, patch) =>
+        set((s) => ({
+          data: {
+            ...s.data,
+            busynessLevels: s.data.busynessLevels.map((l) => (l.id === id ? { ...l, ...patch } : l)),
+          },
+        })),
+      removeBusynessLevel: (id) =>
+        set((s) => {
+          if (s.data.busynessLevels.length <= 1) return s // 最低1段階は残す
+          const levels = s.data.busynessLevels.filter((l) => l.id !== id)
+          const fallback =
+            s.data.defaultBusynessLevelId === id
+              ? levels[0].id
+              : s.data.defaultBusynessLevelId
+          // 削除段階を指す日付・必要人数の該当キーを掃除
+          const dayBusyness: Record<string, string> = {}
+          for (const [date, lid] of Object.entries(s.data.dayBusyness)) {
+            if (lid !== id) dayBusyness[date] = lid
+          }
+          const requirements = s.data.requirements.map((r) => {
+            const counts = { ...r.counts }
+            delete counts[id]
+            return { ...r, counts }
+          })
+          return {
+            data: { ...s.data, busynessLevels: levels, defaultBusynessLevelId: fallback, dayBusyness, requirements },
+          }
+        }),
+      setDefaultBusynessLevel: (id) =>
+        set((s) => ({ data: { ...s.data, defaultBusynessLevelId: id } })),
+      setDayBusyness: (date, levelId) =>
+        set((s) => ({
+          data: { ...s.data, dayBusyness: { ...s.data.dayBusyness, [date]: levelId } },
         })),
 
       setRequirement: (roleId, shiftId, counts) =>

@@ -28,6 +28,16 @@ export interface Role {
   color: string
 }
 
+/**
+ * 忙しさの段階（可変）。並び順が忙しさの低→高を表す。
+ * 各日にこの段階を割り当て、必要人数は段階ごとに設定する。
+ */
+export interface BusynessLevel {
+  id: string
+  name: string
+  color: string
+}
+
 /** シフト時間帯 */
 export interface ShiftType {
   id: string
@@ -65,12 +75,13 @@ export interface Staff {
 
 /**
  * 必要人数。役割 × シフト時間帯 の組み合わせごとに、
- * 曜日区分別の必要人数を持つ。
+ * 忙しさ段階（BusynessLevel.id）別の必要人数を持つ。
  */
 export interface Requirement {
   roleId: string
   shiftId: string
-  counts: Record<DayCategory, number>
+  /** 忙しさ段階ID -> 必要人数 */
+  counts: Record<string, number>
 }
 
 /** NGペア（同じ日に出勤させない） */
@@ -176,6 +187,12 @@ export interface AppData {
   roles: Role[]
   shifts: ShiftType[]
   staff: Staff[]
+  /** 忙しさ段階（可変・並び順=低→高） */
+  busynessLevels: BusynessLevel[]
+  /** 未設定の日に適用する既定の忙しさ段階ID */
+  defaultBusynessLevelId: string
+  /** 日付 "yyyy-MM-dd" -> 忙しさ段階ID */
+  dayBusyness: Record<string, string>
   requirements: Requirement[]
   /** 特定日の必要人数の上書き */
   overrides: RequirementOverride[]

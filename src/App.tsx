@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import PeriodTab from './components/PeriodTab'
+import BusynessCalendar from './components/BusynessCalendar'
 import RolesTab from './components/RolesTab'
 import ShiftsTab from './components/ShiftsTab'
 import StaffTab from './components/StaffTab'
@@ -10,7 +10,7 @@ import GenerateTab from './components/GenerateTab'
 import DataMenu from './components/DataMenu'
 
 type TabId =
-  | 'period'
+  | 'busyness'
   | 'roles'
   | 'shifts'
   | 'staff'
@@ -20,7 +20,7 @@ type TabId =
   | 'generate'
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
-  { id: 'period', label: '期間', icon: '📅' },
+  { id: 'busyness', label: '忙しさ', icon: '📅' },
   { id: 'roles', label: '役割', icon: '🏷️' },
   { id: 'shifts', label: '時間帯', icon: '🕒' },
   { id: 'staff', label: 'スタッフ', icon: '👥' },
@@ -31,7 +31,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
 ]
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>('generate')
+  const [tab, setTab] = useState<TabId>('busyness')
 
   return (
     <div className="min-h-screen">
@@ -63,7 +63,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-6">
-        {tab === 'period' && <PeriodTab />}
+        {tab === 'busyness' && <BusynessCalendar />}
         {tab === 'roles' && <RolesTab />}
         {tab === 'shifts' && <ShiftsTab />}
         {tab === 'staff' && <StaffTab />}

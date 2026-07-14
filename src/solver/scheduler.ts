@@ -486,7 +486,7 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
     for (const shift of data.shifts) {
       const roleNeeds: { roleId: string; needed: number }[] = []
       for (const role of data.roles) {
-        const needed = neededCount(data, date, category, role.id, shift.id)
+        const needed = neededCount(data, date, role.id, shift.id)
         if (needed > 0) roleNeeds.push({ roleId: role.id, needed })
       }
       if (roleNeeds.length === 0) continue

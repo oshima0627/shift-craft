@@ -19,14 +19,25 @@ function baseConstraints(overrides: Partial<Constraints> = {}): Constraints {
   }
 }
 
+const LEVELS = [
+  { id: 'low', name: '暇', color: '#86c9a0' },
+  { id: 'mid', name: '普通', color: '#a7b3c2' },
+  { id: 'high', name: '忙しい', color: '#e08a8a' },
+]
+/** 全段階で同じ人数を要求するヘルパー（曜日区分に依存しないテスト用） */
+function flat(n: number): Record<string, number> {
+  return { low: n, mid: n, high: n }
+}
+
 function baseData(overrides: Partial<AppData> = {}): AppData {
   const data: AppData = {
     roles: [{ id: 'r1', name: 'ホール', color: '#3b6fe0' }],
     shifts: [{ id: 's1', name: '早番', start: '09:00', end: '17:00' }],
     staff: [],
-    requirements: [
-      { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-    ],
+    busynessLevels: LEVELS,
+    defaultBusynessLevelId: 'mid',
+    dayBusyness: {},
+    requirements: [{ roleId: 'r1', shiftId: 's1', counts: flat(1) }],
     overrides: [],
     constraints: baseConstraints(),
     cost: { salesTarget: null, targetLaborRate: 30, includeWelfare: false },
@@ -118,7 +129,7 @@ describe('generateSchedule', () => {
   it('H2: NGペアは同じ日に割り当てない', () => {
     const data = baseData({
       requirements: [
-        { roleId: 'r1', shiftId: 's1', counts: { weekday: 2, saturday: 2, sunday: 2, holiday: 2 } },
+        { roleId: 'r1', shiftId: 's1', counts: flat(2) },
       ],
       staff: [staff('a'), staff('b'), staff('c'), staff('d')],
       constraints: baseConstraints({ incompatiblePairs: [{ a: 'a', b: 'b' }] }),
@@ -138,7 +149,7 @@ describe('generateSchedule', () => {
   it('H3: 各シフトに経験者を最低1名配置する', () => {
     const data = baseData({
       requirements: [
-        { roleId: 'r1', shiftId: 's1', counts: { weekday: 2, saturday: 2, sunday: 2, holiday: 2 } },
+        { roleId: 'r1', shiftId: 's1', counts: flat(2) },
       ],
       // 新人2名 + 経験者2名
       staff: [
@@ -171,8 +182,8 @@ describe('generateSchedule', () => {
         { id: 's2', name: '遅番', start: '13:00', end: '21:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 's2', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 's1', counts: flat(1) },
+        { roleId: 'r1', shiftId: 's2', counts: flat(1) },
       ],
       staff: [staff('a'), staff('b')],
     })
@@ -215,8 +226,8 @@ describe('generateSchedule', () => {
         { id: 's2', name: '遅番', start: '15:00', end: '23:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 's2', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 's1', counts: flat(1) },
+        { roleId: 'r1', shiftId: 's2', counts: flat(1) },
       ],
       staff: [staff('minor', { isMinor: true }), staff('adult')],
     })
@@ -259,8 +270,8 @@ describe('generateSchedule', () => {
         { id: 'late', name: '遅番', start: '17:00', end: '23:30' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
       ],
       constraints: baseConstraints({ restIntervalHours: 11, restIntervalHard: true }),
       staff: [staff('a'), staff('b'), staff('c')],
@@ -323,8 +334,8 @@ describe('generateSchedule', () => {
         { id: 'r2', name: 'キッチン', color: '#111' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r2', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 's1', counts: flat(1) },
+        { roleId: 'r2', shiftId: 's1', counts: flat(1) },
       ],
       period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
       staff: [
@@ -349,8 +360,8 @@ describe('generateSchedule', () => {
         { id: 'late', name: '遅番', start: '14:00', end: '18:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
       ],
       period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
       staff: [staff('a')],
@@ -370,8 +381,8 @@ describe('generateSchedule', () => {
         { id: 'late', name: '遅番', start: '14:00', end: '18:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
       ],
       period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
       staff: [staff('a')],
@@ -391,8 +402,8 @@ describe('generateSchedule', () => {
         { id: 'late', name: '遅番', start: '13:00', end: '19:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
       ],
       period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
       staff: [staff('a')],
@@ -412,8 +423,8 @@ describe('generateSchedule', () => {
         { id: 'late', name: '遅番', start: '14:00', end: '18:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
       ],
       period: { start: '2026-08-02', end: '2026-08-08', holidays: [] },
       staff: [staff('a')],
@@ -431,8 +442,8 @@ describe('generateSchedule', () => {
         { id: 'late', name: '遅番', start: '17:00', end: '21:00' },
       ],
       requirements: [
-        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
-        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
       ],
       period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
       staff: [staff('a'), staff('b'), staff('c'), staff('d')], // 十分な人数

@@ -1,46 +1,28 @@
 import { useState } from 'react'
 import { useStore } from '../state/store'
-import {
-  DAY_CATEGORY_LABELS,
-  DAY_CATEGORY_ORDER,
-  type DayCategory,
-  type Requirement,
-} from '../types'
+import type { Requirement } from '../types'
 import { displayDate } from '../utils/date'
-
-const EMPTY_COUNTS: Requirement['counts'] = {
-  weekday: 0,
-  saturday: 0,
-  sunday: 0,
-  holiday: 0,
-}
 
 export default function RequirementsTab() {
   const roles = useStore((s) => s.data.roles)
   const shifts = useStore((s) => s.data.shifts)
+  const levels = useStore((s) => s.data.busynessLevels)
   const requirements = useStore((s) => s.data.requirements)
   const setRequirement = useStore((s) => s.setRequirement)
 
   const getCounts = (roleId: string, shiftId: string): Requirement['counts'] => {
     const req = requirements.find((r) => r.roleId === roleId && r.shiftId === shiftId)
-    return req ? req.counts : EMPTY_COUNTS
+    return req ? req.counts : {}
   }
 
-  const setCount = (
-    roleId: string,
-    shiftId: string,
-    cat: DayCategory,
-    value: number,
-  ) => {
-    const counts = { ...getCounts(roleId, shiftId), [cat]: Math.max(0, value) }
+  const setCount = (roleId: string, shiftId: string, levelId: string, value: number) => {
+    const counts = { ...getCounts(roleId, shiftId), [levelId]: Math.max(0, value) }
     setRequirement(roleId, shiftId, counts)
   }
 
   if (roles.length === 0 || shifts.length === 0) {
     return (
-      <p className="text-sm text-slate-500">
-        先に「役割」と「時間帯」を登録してください。
-      </p>
+      <p className="text-sm text-slate-500">先に「役割」と「時間帯」を登録してください。</p>
     )
   }
 
@@ -48,7 +30,7 @@ export default function RequirementsTab() {
     <div className="space-y-4">
       <h2 className="text-base font-bold text-slate-700">必要人数</h2>
       <p className="text-sm text-slate-500">
-        役割 × 時間帯ごとに、曜日区分（平日 / 土 / 日 / 祝）別の必要人数を設定します。
+        役割 × 時間帯ごとに、<b>忙しさ段階</b>別の必要人数を設定します。各日の忙しさは「忙しさ」タブで設定します。
       </p>
 
       <div className="space-y-5">
@@ -65,9 +47,14 @@ export default function RequirementsTab() {
                 <thead>
                   <tr className="text-slate-500">
                     <th className="pb-2 text-left font-medium">役割</th>
-                    {DAY_CATEGORY_ORDER.map((cat) => (
-                      <th key={cat} className="pb-2 text-center font-medium">
-                        {DAY_CATEGORY_LABELS[cat]}
+                    {levels.map((l) => (
+                      <th key={l.id} className="pb-2 text-center font-medium">
+                        <span
+                          className="inline-block rounded px-2 py-0.5 text-xs text-white"
+                          style={{ backgroundColor: l.color }}
+                        >
+                          {l.name}
+                        </span>
                       </th>
                     ))}
                   </tr>
@@ -85,15 +72,15 @@ export default function RequirementsTab() {
                             {role.name}
                           </span>
                         </td>
-                        {DAY_CATEGORY_ORDER.map((cat) => (
-                          <td key={cat} className="py-2 text-center">
+                        {levels.map((l) => (
+                          <td key={l.id} className="py-2 text-center">
                             <input
                               type="number"
                               min={0}
                               className="input w-16 text-center"
-                              value={counts[cat]}
+                              value={counts[l.id] ?? 0}
                               onChange={(e) =>
-                                setCount(role.id, shift.id, cat, Number(e.target.value))
+                                setCount(role.id, shift.id, l.id, Number(e.target.value))
                               }
                             />
                           </td>
@@ -139,7 +126,7 @@ function OverridesCard() {
       <div>
         <h3 className="text-sm font-bold text-slate-700">📌 特定日の人数上書き</h3>
         <p className="text-xs text-slate-500">
-          イベント日・繁忙日など「この日は◯人」を指定できます。曜日区分の設定より優先されます（0人で「この日はこの枠なし」も可）。
+          イベント日など「この日は◯人」を指定できます。忙しさ段階の設定より優先されます（0人で「この日はこの枠なし」も可）。
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -189,9 +176,7 @@ function OverridesCard() {
             </button>
           </span>
         ))}
-        {overrides.length === 0 && (
-          <span className="text-xs text-slate-400">上書きはありません。</span>
-        )}
+        {overrides.length === 0 && <span className="text-xs text-slate-400">上書きはありません。</span>}
       </div>
     </div>
   )

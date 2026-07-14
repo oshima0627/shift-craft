@@ -1,13 +1,13 @@
-import type { AppData, DayCategory } from '../types'
+import type { AppData } from '../types'
+import { busynessIdOf } from './busyness'
 
 /**
  * その日・その役割・その時間帯の必要人数。
- * 特定日の上書き（overrides）＞ 曜日区分（requirements） の優先で解決する。
+ * 特定日の上書き（overrides）＞ 忙しさ段階別の必要人数（requirements） の優先で解決する。
  */
 export function neededCount(
   data: AppData,
   date: string,
-  category: DayCategory,
   roleId: string,
   shiftId: string,
 ): number {
@@ -16,5 +16,7 @@ export function neededCount(
   )
   if (ov) return Math.max(0, ov.count)
   const req = data.requirements.find((r) => r.roleId === roleId && r.shiftId === shiftId)
-  return req ? Math.max(0, req.counts[category]) : 0
+  if (!req) return 0
+  const levelId = busynessIdOf(data, date)
+  return Math.max(0, req.counts[levelId] ?? 0)
 }
