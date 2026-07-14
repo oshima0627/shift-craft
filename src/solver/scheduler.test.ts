@@ -34,6 +34,11 @@ function baseData(overrides: Partial<AppData> = {}): AppData {
     roles: [{ id: 'r1', name: 'ホール', color: '#3b6fe0' }],
     shifts: [{ id: 's1', name: '早番', start: '09:00', end: '17:00' }],
     staff: [],
+    leaveTypes: [
+      { id: 'full', name: '全休', start: '00:00', end: '24:00' },
+      { id: 'am', name: '午前休', start: '09:00', end: '15:00' },
+      { id: 'pm', name: '午後休', start: '17:00', end: '21:00' },
+    ],
     busynessLevels: LEVELS,
 
     dayBusyness: {},
@@ -61,7 +66,7 @@ const staff = (
   maxConsecutive: null,
   weeklyMaxHours: null,
   weeklyMaxDays: null,
-  unavailableDates: [],
+  leaves: [],
   allowedShiftIds: [],
   ...opts,
 })
@@ -87,11 +92,32 @@ describe('generateSchedule', () => {
 
   it('H4: 出勤不可日には割り当てない', () => {
     const data = baseData({
-      staff: [staff('a', { unavailableDates: ['2026-08-03'] }), staff('b')],
+      staff: [staff('a', { leaves: [{ date: '2026-08-03', typeId: 'full' }] }), staff('b')],
     })
     const res = generateSchedule(data)
     const aOn3 = res.assignments.find((x) => x.staffId === 'a' && x.date === '2026-08-03')
     expect(aOn3).toBeUndefined()
+  })
+
+  it('H4: 時間休はその時間に重なるシフトにだけ入れない', () => {
+    // 午前休(09:00-15:00)の a は 早番(09:00-13:00)に入れないが 遅番(17:00-21:00)には入れる
+    const data = baseData({
+      shifts: [
+        { id: 'early', name: '早番', start: '09:00', end: '13:00' },
+        { id: 'late', name: '遅番', start: '17:00', end: '21:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: flat(1) },
+        { roleId: 'r1', shiftId: 'late', counts: flat(1) },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
+      staff: [staff('a', { leaves: [{ date: '2026-08-03', typeId: 'am' }] }), staff('b')],
+    })
+    const res = generateSchedule(data)
+    // a は早番に入っていない（午前休に重なる）
+    expect(res.assignments.some((x) => x.staffId === 'a' && x.shiftId === 'early')).toBe(false)
+    // a は遅番には入れる（重ならない）
+    expect(res.assignments.some((x) => x.staffId === 'a' && x.shiftId === 'late')).toBe(true)
   })
 
   it('H5: 出勤上限を超えない', () => {

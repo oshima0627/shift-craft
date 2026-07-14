@@ -82,7 +82,11 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
               </td>
               {dates.map((date) => {
                 const cells = cellsOf(st.id, date)
-                const unavailable = st.unavailableDates.includes(date)
+                const leave = st.leaves.find((l) => l.date === date)
+                const leaveName = leave
+                  ? data.leaveTypes.find((t) => t.id === leave.typeId)?.name
+                  : undefined
+                const unavailable = !!leave
                 const rest = isRestDay(date)
                 return (
                   <td
@@ -100,7 +104,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
                             )
                             .join('、')
                         : unavailable
-                          ? '希望休'
+                          ? `希望休（${leaveName ?? ''}）`
                           : 'クリックで割り当て'
                     }
                   >
@@ -121,7 +125,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
                         })}
                       </div>
                     ) : unavailable ? (
-                      <span className="text-[10px] text-red-300">×</span>
+                      <span className="text-[9px] font-medium text-red-400">{leaveName ?? '休'}</span>
                     ) : (
                       <span className="text-slate-200">·</span>
                     )}

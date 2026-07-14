@@ -111,6 +111,18 @@ export function shiftsOverlap(
   return sa.startMin < sb.endMin && sb.startMin < sa.endMin
 }
 
+/**
+ * 休み（全休・時間休）がシフトに掛かるか。
+ * 休みの時間帯とシフトの時間帯が重なれば、そのシフトには入れない。
+ * 全休（00:00〜24:00）はすべてのシフトに掛かる。
+ */
+export function leaveBlocksShift(
+  leave: { start: string; end: string },
+  shift: Pick<ShiftType, 'start' | 'end'>,
+): boolean {
+  return shiftsOverlap(leave, shift)
+}
+
 /** 週キー（日曜起算）。"yyyy-MM-dd" → その週の日曜日の "yyyy-MM-dd" */
 export function weekKeyOf(dateStr: string): string {
   const d = parse(dateStr)

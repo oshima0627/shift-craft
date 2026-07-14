@@ -12,12 +12,14 @@ import { dayCategoryOf, enumerateDates } from '../utils/date'
 import { neededCount } from '../utils/requirements'
 import {
   isMinorForbidden,
+  leaveBlocksShift,
   paidMin,
   restBetweenMin,
   shiftSpan,
   shiftsOverlap,
   weekKeyOf,
 } from '../utils/time'
+import type { LeaveType } from '../types'
 import { validateSchedule } from './compliance'
 
 /**
@@ -109,6 +111,8 @@ interface Ctx {
   restLimitMin: number
   allowSplitShifts: boolean
   preferSplitShifts: boolean
+  // staffId -> (date -> 休みの種類)
+  leaveByStaff: Map<string, Map<string, LeaveType>>
 }
 
 /** シフトID配列のうち最も遅く終わるシフト（前日→当日の休息計算用） */
@@ -260,7 +264,22 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
     restLimitMin: data.constraints.restIntervalHours * 60,
     allowSplitShifts: data.constraints.allowSplitShifts,
     preferSplitShifts: data.constraints.preferSplitShifts,
+    leaveByStaff: buildLeaveMap(data),
   }
+}
+
+function buildLeaveMap(data: AppData): Map<string, Map<string, LeaveType>> {
+  const typeById = new Map(data.leaveTypes.map((t) => [t.id, t]))
+  const map = new Map<string, Map<string, LeaveType>>()
+  for (const st of data.staff) {
+    const m = new Map<string, LeaveType>()
+    for (const lv of st.leaves) {
+      const t = typeById.get(lv.typeId)
+      if (t) m.set(lv.date, t)
+    }
+    map.set(st.id, m)
+  }
+  return map
 }
 
 /** メインの生成関数 */
@@ -356,8 +375,9 @@ function hardCheck(
       if (other && shiftsOverlap(other, shift)) return NG
     }
   }
-  // H4: 出勤不可日・希望休
-  if (staff.unavailableDates.includes(demand.date)) return NG
+  // H4: 休み希望（全休・時間休）。休みの時間帯がシフトに重なるなら不可
+  const leave = ctx.leaveByStaff.get(staff.id)?.get(demand.date)
+  if (leave && leaveBlocksShift(leave, shift)) return NG
   // シフト時間帯の制限（本人設定）
   if (staff.allowedShiftIds.length > 0 && !staff.allowedShiftIds.includes(demand.shiftId)) return NG
   // H7: 年少者の深夜禁止（労基法61条）

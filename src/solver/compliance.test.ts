@@ -22,7 +22,7 @@ function data(overrides: Partial<AppData> = {}): AppData {
         maxConsecutive: null,
         weeklyMaxHours: null,
         weeklyMaxDays: null,
-        unavailableDates: [],
+        leaves: [],
         allowedShiftIds: [],
       },
       {
@@ -36,10 +36,11 @@ function data(overrides: Partial<AppData> = {}): AppData {
         maxConsecutive: null,
         weeklyMaxHours: null,
         weeklyMaxDays: null,
-        unavailableDates: [],
+        leaves: [],
         allowedShiftIds: [],
       },
     ],
+    leaveTypes: [{ id: 'full', name: '全休', start: '00:00', end: '24:00' }],
     busynessLevels: [
       { id: 'low', name: '暇', color: '#86c9a0' },
       { id: 'mid', name: '普通', color: '#a7b3c2' },
