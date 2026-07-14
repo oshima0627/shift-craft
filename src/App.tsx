@@ -32,6 +32,23 @@ const TABS: { id: TabId; label: string; path: string }[] = [
   { id: 'generate', label: 'シフト生成', path: '/generate' },
 ]
 
+/**
+ * 画面ごとの最大幅（左右余白）。中身に合わせて決める。
+ * 31日分の横長の表がある「希望休」「シフト生成」だけ広くし、
+ * それ以外はフォーム・カードが読みやすい幅に絞る（無駄に横に広げない）。
+ * ヘッダー・ナビ・本文に同じ幅を適用して左右端を揃える。
+ */
+const CONTENT_WIDTH: Record<TabId, string> = {
+  roles: 'max-w-[880px]',
+  shifts: 'max-w-[880px]',
+  staff: 'max-w-[1040px]',
+  busyness: 'max-w-[1000px]',
+  requirements: 'max-w-[1040px]',
+  dayoff: 'max-w-[1760px]',
+  constraints: 'max-w-[900px]',
+  generate: 'max-w-[1760px]',
+}
+
 /** URLパス → タブID（不明・ルートは最初の手順） */
 function tabFromPath(pathname: string): TabId {
   const hit = TABS.find((t) => t.path === pathname)
@@ -64,11 +81,12 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
   }
 
   const activeIndex = TABS.findIndex((t) => t.id === tab)
+  const containerW = CONTENT_WIDTH[tab]
 
   return (
     <div className="min-h-screen">
       <header className="no-print sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1920px] items-center justify-between gap-3 px-3 py-4 sm:px-5">
+        <div className={`mx-auto flex ${containerW} items-center justify-between gap-3 px-3 py-4 sm:px-5`}>
           <div className="flex items-baseline gap-2.5">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
             <span className="hidden text-sm text-slate-400 sm:inline">シフト表作成</span>
@@ -84,7 +102,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
         </div>
 
         {/* 手順ナビ：①〜⑧の流れが一目でわかるよう、番号つきの大きなステップに */}
-        <nav className="mx-auto max-w-[1920px] px-3 pb-3 sm:px-5">
+        <nav className={`mx-auto ${containerW} px-3 pb-3 sm:px-5`}>
           <ol className="flex flex-wrap gap-2">
             {TABS.map((t, i) => {
               const active = tab === t.id
@@ -117,12 +135,12 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
 
       {/* 現在の手順の見出し（今どこにいるか一目でわかるように） */}
       <div className="no-print border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-[1920px] px-3 py-3 text-sm font-semibold text-brand-600 sm:px-5">
+        <div className={`mx-auto ${containerW} px-3 py-3 text-sm font-semibold text-brand-600 sm:px-5`}>
           手順 {activeIndex + 1} / {TABS.length}
         </div>
       </div>
 
-      <main className="mx-auto max-w-[1920px] px-3 py-6 sm:px-5">
+      <main className={`mx-auto ${containerW} px-3 py-6 sm:px-5`}>
         {tab === 'busyness' && <BusynessCalendar />}
         {tab === 'roles' && <RolesTab />}
         {tab === 'shifts' && <ShiftsTab />}
