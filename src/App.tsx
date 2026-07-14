@@ -76,7 +76,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
                 ログアウト
               </button>
             )}
-            <DataMenu />
+            <DataMenu authed={!!onLogout} />
           </div>
         </div>
         <nav className="mx-auto flex max-w-[1400px] gap-1 overflow-x-auto px-2 pb-2">

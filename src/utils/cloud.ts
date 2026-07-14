@@ -65,7 +65,7 @@ export function formatSyncTime(iso: string): string {
 // ===== 認証（アプリ内ログイン） =====
 
 export type AuthStatus =
-  | { backend: true; configured: boolean; authenticated: boolean }
+  | { backend: true; configured: boolean; authenticated: boolean; username?: string }
   | { backend: false }
 
 /** 認証状態を取得。バックエンド未接続（ローカル開発等）なら backend:false */
@@ -74,9 +74,18 @@ export async function getAuthStatus(): Promise<AuthStatus> {
     const res = await fetch('/api/auth/status', { headers: { accept: 'application/json' } })
     const ct = res.headers.get('content-type') ?? ''
     if (!ct.includes('application/json')) return { backend: false }
-    const body = (await res.json()) as { configured?: boolean; authenticated?: boolean }
+    const body = (await res.json()) as {
+      configured?: boolean
+      authenticated?: boolean
+      username?: string
+    }
     if (typeof body.configured !== 'boolean') return { backend: false }
-    return { backend: true, configured: body.configured, authenticated: !!body.authenticated }
+    return {
+      backend: true,
+      configured: body.configured,
+      authenticated: !!body.authenticated,
+      username: body.username,
+    }
   } catch {
     return { backend: false }
   }
@@ -97,14 +106,19 @@ async function postJson(path: string, body: unknown): Promise<{ ok: boolean; err
   }
 }
 
-/** 初回パスワード設定（未設定時のみ） */
-export function setupPassword(password: string) {
-  return postJson('/api/auth/setup', { password })
+/** 初回アカウント作成（ユーザーが未登録のときのみ） */
+export function setupAccount(username: string, password: string) {
+  return postJson('/api/auth/setup', { username, password })
 }
 
-/** ログイン */
-export function login(password: string) {
-  return postJson('/api/auth/login', { password })
+/** ログイン（ID＋パスワード） */
+export function login(username: string, password: string) {
+  return postJson('/api/auth/login', { username, password })
+}
+
+/** アカウント追加（要ログイン） */
+export function registerAccount(username: string, password: string) {
+  return postJson('/api/auth/register', { username, password })
 }
 
 /** ログアウト */
