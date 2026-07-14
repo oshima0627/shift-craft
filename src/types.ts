@@ -124,6 +124,11 @@ export interface Constraints {
   restIntervalHard: boolean
   /** 週の法定労働時間上限。40h、または特例措置対象事業場（常時10人未満の商業・サービス業）は44h */
   weeklyHoursCap: number
+  /**
+   * 同じ日に複数のシフトを許可するか（早番→遅番などの分割勤務）。
+   * true=時間帯が重ならなければ同日に複数入れられる。false=1人1日1シフト。
+   */
+  allowSplitShifts: boolean
   /** ソフト制約の重み */
   weights: {
     /** 出勤回数の公平化 */

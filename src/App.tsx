@@ -36,7 +36,7 @@ export default function App() {
   return (
     <div className="min-h-screen">
       <header className="no-print sticky top-0 z-10 border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
             <span className="text-xl">🗓️</span>
             <h1 className="text-lg font-bold text-slate-800">ShiftCraft</h1>
@@ -44,7 +44,7 @@ export default function App() {
           </div>
           <DataMenu />
         </div>
-        <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-2 pb-2">
+        <nav className="mx-auto flex max-w-[1400px] gap-1 overflow-x-auto px-2 pb-2">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -62,7 +62,7 @@ export default function App() {
         </nav>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="mx-auto max-w-[1400px] px-4 py-6">
         {tab === 'period' && <PeriodTab />}
         {tab === 'roles' && <RolesTab />}
         {tab === 'shifts' && <ShiftsTab />}

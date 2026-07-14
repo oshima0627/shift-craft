@@ -97,6 +97,20 @@ export function restBetweenMin(
   return 1440 + next.startMin - prev.endMin
 }
 
+/**
+ * 2つのシフトの時間帯が重なるか。
+ * 同じ日に両方入れてよいか（早番→遅番の分割勤務可否）の判定に使う。
+ * 隣接（前のシフト終了 = 次のシフト開始）は重ならないと扱う。
+ */
+export function shiftsOverlap(
+  a: Pick<ShiftType, 'start' | 'end'>,
+  b: Pick<ShiftType, 'start' | 'end'>,
+): boolean {
+  const sa = shiftSpan(a)
+  const sb = shiftSpan(b)
+  return sa.startMin < sb.endMin && sb.startMin < sa.endMin
+}
+
 /** 週キー（日曜起算）。"yyyy-MM-dd" → その週の日曜日の "yyyy-MM-dd" */
 export function weekKeyOf(dateStr: string): string {
   const d = parse(dateStr)

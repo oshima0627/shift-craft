@@ -14,6 +14,8 @@ import {
   isMinorForbidden,
   paidMin,
   restBetweenMin,
+  shiftSpan,
+  shiftsOverlap,
   weekKeyOf,
 } from '../utils/time'
 import { validateSchedule } from './compliance'
@@ -69,13 +71,15 @@ interface SlotDemand {
 /** 生成中に更新するスタッフの状態 */
 interface StaffState {
   assignedDates: Set<string>
+  // 割り当てシフト数（分割勤務では1日で複数になりうる。公平化は仕事量=シフト数で見る）
   totalAssigned: number
+  // 土日祝に出勤した「日数」（分割勤務でも1日は1）
   weekendAssigned: number
-  // date -> shiftId（その日どのシフトに入ったか。1人1日1シフト前提）
-  dayShift: Map<string, string>
-  // 週キー -> 実働分
+  // date -> その日に入ったシフトIDの配列（分割勤務対応）
+  dayShiftIds: Map<string, string[]>
+  // 週キー -> 実働分（全シフト合算）
   weekMin: Map<string, number>
-  // 週キー -> 出勤日数
+  // 週キー -> 出勤「日数」（分割勤務でも1日は1）
   weekDays: Map<string, number>
 }
 
@@ -103,6 +107,39 @@ interface Ctx {
   together: Map<string, Set<string>>
   rulesByStaff: Map<string, StaffRules>
   restLimitMin: number
+  allowSplitShifts: boolean
+}
+
+/** シフトID配列のうち最も遅く終わるシフト（前日→当日の休息計算用） */
+function latestEndingShift(ctx: Ctx, shiftIds: string[]): ShiftType | null {
+  let best: ShiftType | null = null
+  let bestEnd = -Infinity
+  for (const id of shiftIds) {
+    const sh = ctx.shiftById.get(id)
+    if (!sh) continue
+    const end = shiftSpan(sh).endMin
+    if (end > bestEnd) {
+      bestEnd = end
+      best = sh
+    }
+  }
+  return best
+}
+
+/** シフトID配列のうち最も早く始まるシフト（当日→翌日の休息計算用） */
+function earliestStartingShift(ctx: Ctx, shiftIds: string[]): ShiftType | null {
+  let best: ShiftType | null = null
+  let bestStart = Infinity
+  for (const id of shiftIds) {
+    const sh = ctx.shiftById.get(id)
+    if (!sh) continue
+    const start = shiftSpan(sh).startMin
+    if (start < bestStart) {
+      bestStart = start
+      best = sh
+    }
+  }
+  return best
 }
 
 function isExperienced(s: Staff): boolean {
@@ -220,6 +257,7 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
     together,
     rulesByStaff,
     restLimitMin: data.constraints.restIntervalHours * 60,
+    allowSplitShifts: data.constraints.allowSplitShifts,
   }
 }
 
@@ -245,26 +283,42 @@ export function generateSchedule(data: AppData, attempts = 40, seed = 12345): Sc
   return best!
 }
 
-/** 割り当てをスタッフ状態に反映 */
+/** 割り当てをスタッフ状態に反映（分割勤務対応：同日2件目以降は「日数」を増やさない） */
 function applyAssign(ctx: Ctx, st: StaffState, a: Assignment) {
-  st.assignedDates.add(a.date)
-  st.totalAssigned++
-  if (ctx.categoryByDate.get(a.date) !== 'weekday') st.weekendAssigned++
-  st.dayShift.set(a.date, a.shiftId)
+  const list = st.dayShiftIds.get(a.date)
+  const isNewDay = !list || list.length === 0
+  if (list) list.push(a.shiftId)
+  else st.dayShiftIds.set(a.date, [a.shiftId])
+
+  st.totalAssigned++ // シフト数（仕事量）
   const wk = ctx.weekKeyByDate.get(a.date)!
   st.weekMin.set(wk, (st.weekMin.get(wk) ?? 0) + (ctx.paidMinByShift.get(a.shiftId) ?? 0))
-  st.weekDays.set(wk, (st.weekDays.get(wk) ?? 0) + 1)
+
+  if (isNewDay) {
+    st.assignedDates.add(a.date)
+    st.weekDays.set(wk, (st.weekDays.get(wk) ?? 0) + 1)
+    if (ctx.categoryByDate.get(a.date) !== 'weekday') st.weekendAssigned++
+  }
 }
 
 /** 割り当てをスタッフ状態から除去（applyAssign の逆操作） */
 function removeAssign(ctx: Ctx, st: StaffState, a: Assignment) {
-  st.assignedDates.delete(a.date)
+  const list = st.dayShiftIds.get(a.date)
+  if (list) {
+    const i = list.indexOf(a.shiftId)
+    if (i >= 0) list.splice(i, 1)
+  }
+  const stillWorks = (st.dayShiftIds.get(a.date)?.length ?? 0) > 0
+
   st.totalAssigned--
-  if (ctx.categoryByDate.get(a.date) !== 'weekday') st.weekendAssigned--
-  st.dayShift.delete(a.date)
   const wk = ctx.weekKeyByDate.get(a.date)!
   st.weekMin.set(wk, (st.weekMin.get(wk) ?? 0) - (ctx.paidMinByShift.get(a.shiftId) ?? 0))
-  st.weekDays.set(wk, (st.weekDays.get(wk) ?? 0) - 1)
+
+  if (!stillWorks) {
+    st.assignedDates.delete(a.date)
+    st.weekDays.set(wk, (st.weekDays.get(wk) ?? 0) - 1)
+    if (ctx.categoryByDate.get(a.date) !== 'weekday') st.weekendAssigned--
+  }
 }
 
 interface HardCheck {
@@ -290,8 +344,16 @@ function hardCheck(
 
   // H1: 役割を担当できるか
   if (!staff.roleIds.includes(demand.roleId)) return NG
-  // H6: すでに今日どこかに入っている（1人1日1シフト）
-  if (st.dayShift.has(demand.date)) return NG
+  // H6: 同日の既存シフトとの関係。分割勤務OFFなら1日1シフト、
+  //     ONなら時間帯が重ならなければ複数可（早番→遅番など）
+  const sameDay = st.dayShiftIds.get(demand.date)
+  if (sameDay && sameDay.length > 0) {
+    if (!ctx.allowSplitShifts) return NG
+    for (const sid of sameDay) {
+      const other = ctx.shiftById.get(sid)
+      if (other && shiftsOverlap(other, shift)) return NG
+    }
+  }
   // H4: 出勤不可日・希望休
   if (staff.unavailableDates.includes(demand.date)) return NG
   // シフト時間帯の制限（本人設定）
@@ -335,21 +397,22 @@ function hardCheck(
     if (ctx.incompatible.has(pairKey(staff.id, otherId))) return NG
   }
 
-  // 勤務間インターバル（前日・翌日の割り当てとの休息時間）
+  // 勤務間インターバル（前日の最遅シフト → 当日、当日 → 翌日の最早シフト）
+  // 同日内の分割勤務は「日をまたぐ休息」ではないので対象外
   let restViolations = 0
   if (ctx.restLimitMin > 0) {
     const idx = ctx.dateIndex.get(demand.date)!
     const prevDate = ctx.dates[idx - 1]
     const nextDate = ctx.dates[idx + 1]
-    const prevShiftId = prevDate ? st.dayShift.get(prevDate) : undefined
-    const nextShiftId = nextDate ? st.dayShift.get(nextDate) : undefined
-    if (prevShiftId) {
-      const prevShift = ctx.shiftById.get(prevShiftId)!
-      if (restBetweenMin(prevShift, shift) < ctx.restLimitMin) restViolations++
+    const prevShifts = prevDate ? st.dayShiftIds.get(prevDate) : undefined
+    const nextShifts = nextDate ? st.dayShiftIds.get(nextDate) : undefined
+    if (prevShifts && prevShifts.length > 0) {
+      const prevShift = latestEndingShift(ctx, prevShifts)
+      if (prevShift && restBetweenMin(prevShift, shift) < ctx.restLimitMin) restViolations++
     }
-    if (nextShiftId) {
-      const nextShift = ctx.shiftById.get(nextShiftId)!
-      if (restBetweenMin(shift, nextShift) < ctx.restLimitMin) restViolations++
+    if (nextShifts && nextShifts.length > 0) {
+      const nextShift = earliestStartingShift(ctx, nextShifts)
+      if (nextShift && restBetweenMin(shift, nextShift) < ctx.restLimitMin) restViolations++
     }
     // H10: ハード設定ならインターバル違反となる割り当ては行わない
     if (data.constraints.restIntervalHard && restViolations > 0) return NG
@@ -358,25 +421,32 @@ function hardCheck(
   return { ok: true, restViolations }
 }
 
+/** その日に出勤している（いずれかのシフトに入っている）スタッフIDの集合 */
+function dayStaffIds(dayList: Assignment[]): Set<string> {
+  const s = new Set<string>()
+  for (const a of dayList) s.add(a.staffId)
+  return s
+}
+
 /**
  * (date, shiftId) グループの経験者最低数チェック。
- * addStaff を加え removeId を除いた構成で判定する。
+ * addStaff を加え removeStaffId を除いた構成で判定する。
  */
 function expOkAfter(
   ctx: Ctx,
-  dayMap: Map<string, Assignment>,
+  dayList: Assignment[],
   shiftId: string,
   addStaff: Staff | null,
-  removeId: string | null,
+  removeStaffId: string | null,
 ): boolean {
   const minExp = ctx.data.constraints.minExperiencedPerShift
   if (minExp <= 0) return true
   let size = 0
   let exp = 0
-  for (const [staffId, a] of dayMap) {
-    if (a.shiftId !== shiftId || staffId === removeId) continue
+  for (const a of dayList) {
+    if (a.shiftId !== shiftId || a.staffId === removeStaffId) continue
     size++
-    if (isExperienced(ctx.staffById.get(staffId)!)) exp++
+    if (isExperienced(ctx.staffById.get(a.staffId)!)) exp++
   }
   if (addStaff) {
     size++
@@ -394,22 +464,22 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
       assignedDates: new Set(),
       totalAssigned: 0,
       weekendAssigned: 0,
-      dayShift: new Map(),
+      dayShiftIds: new Map(),
       weekMin: new Map(),
       weekDays: new Map(),
     })
   }
 
   const assignments: Assignment[] = []
-  const assignedByDate = new Map<string, Map<string, Assignment>>()
+  const assignedByDate = new Map<string, Assignment[]>()
   const missed: SlotDemand[] = []
 
   for (const date of dates) {
     const category = ctx.categoryByDate.get(date)!
     const weekday = ctx.weekdayByDate.get(date)!
     const weekKey = ctx.weekKeyByDate.get(date)!
-    const dayMap = new Map<string, Assignment>()
-    assignedByDate.set(date, dayMap)
+    const dayList: Assignment[] = []
+    assignedByDate.set(date, dayList)
 
     for (const shift of data.shifts) {
       const roleNeeds: { roleId: string; needed: number }[] = []
@@ -433,7 +503,7 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
         const remainingSlots = demands.length - di
         const mustBeExperienced = expNeeded >= remainingSlots
 
-        const chosen = pickStaff(ctx, demand, states, dayMap, rng, mustBeExperienced)
+        const chosen = pickStaff(ctx, demand, states, dayList, rng, mustBeExperienced)
 
         if (chosen) {
           const a: Assignment = {
@@ -443,7 +513,7 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
             staffId: chosen.id,
           }
           applyAssign(ctx, states.get(chosen.id)!, a)
-          dayMap.set(chosen.id, a)
+          dayList.push(a)
           assignments.push(a)
           if (isExperienced(chosen) && expNeeded > 0) expNeeded--
         } else {
@@ -480,20 +550,24 @@ function repair(
   ctx: Ctx,
   states: Map<string, StaffState>,
   assignments: Assignment[],
-  assignedByDate: Map<string, Map<string, Assignment>>,
+  assignedByDate: Map<string, Assignment[]>,
   missed: SlotDemand[],
 ) {
   const { data } = ctx
 
-  const tryFill = (demand: SlotDemand): boolean => {
-    const dayMap = assignedByDate.get(demand.date)!
+  const removeFromList = (list: Assignment[], a: Assignment) => {
+    const i = list.indexOf(a)
+    if (i >= 0) list.splice(i, 1)
+  }
 
-    // (a) 直接割り当て
+  const tryFill = (demand: SlotDemand): boolean => {
+    const dayList = assignedByDate.get(demand.date)!
+
+    // (a) 直接割り当て（分割勤務可なら既に出勤中の人も候補。hardCheck が時間重複を判定）
     for (const staff of data.staff) {
-      if (dayMap.has(staff.id)) continue
       const st = states.get(staff.id)!
-      if (!hardCheck(ctx, demand, staff, st, dayMap.keys()).ok) continue
-      if (!expOkAfter(ctx, dayMap, demand.shiftId, staff, null)) continue
+      if (!hardCheck(ctx, demand, staff, st, dayStaffIds(dayList)).ok) continue
+      if (!expOkAfter(ctx, dayList, demand.shiftId, staff, null)) continue
       const a: Assignment = {
         date: demand.date,
         shiftId: demand.shiftId,
@@ -501,34 +575,35 @@ function repair(
         staffId: staff.id,
       }
       applyAssign(ctx, st, a)
-      dayMap.set(staff.id, a)
+      dayList.push(a)
       assignments.push(a)
       return true
     }
 
     // (b) チェーン移動（A を未充足スロットへ、B を A の元スロットへ）
     for (const A of data.staff) {
-      const curA = dayMap.get(A.id)
+      // A の当日割り当てのうち、対象スロットとは別のものを1つ選ぶ
+      const curA = dayList.find(
+        (x) =>
+          x.staffId === A.id && !(x.shiftId === demand.shiftId && x.roleId === demand.roleId),
+      )
       if (!curA) continue
-      if (curA.shiftId === demand.shiftId && curA.roleId === demand.roleId) continue
       const stA = states.get(A.id)!
       const origShift = curA.shiftId
       const origRole = curA.roleId
 
       // A をいったん外して、未充足スロットに入れるか確認
       removeAssign(ctx, stA, curA)
-      dayMap.delete(A.id)
+      removeFromList(dayList, curA)
 
       const moveOk =
-        hardCheck(ctx, demand, A, stA, dayMap.keys()).ok &&
-        expOkAfter(ctx, dayMap, demand.shiftId, A, null) &&
-        // A が抜けた元グループが（B を入れる前でも）成立し得るかは B 追加後に判定
-        true
+        hardCheck(ctx, demand, A, stA, dayStaffIds(dayList)).ok &&
+        expOkAfter(ctx, dayList, demand.shiftId, A, null)
 
       if (!moveOk) {
         // 戻す
-        dayMap.set(A.id, curA)
         applyAssign(ctx, stA, curA)
+        dayList.push(curA)
         continue
       }
 
@@ -536,16 +611,17 @@ function repair(
       curA.shiftId = demand.shiftId
       curA.roleId = demand.roleId
       applyAssign(ctx, stA, curA)
-      dayMap.set(A.id, curA)
+      dayList.push(curA)
 
       // 元スロットに入れる B を探す
       const origDemand: SlotDemand = { ...demand, shiftId: origShift, roleId: origRole }
+      let filled = false
       for (const B of data.staff) {
-        if (B.id === A.id || dayMap.has(B.id)) continue
+        if (B.id === A.id) continue
         const stB = states.get(B.id)!
-        if (!hardCheck(ctx, origDemand, B, stB, dayMap.keys()).ok) continue
-        if (!expOkAfter(ctx, dayMap, origShift, B, null)) continue
-        if (!expOkAfter(ctx, dayMap, demand.shiftId, null, null)) continue
+        if (!hardCheck(ctx, origDemand, B, stB, dayStaffIds(dayList)).ok) continue
+        if (!expOkAfter(ctx, dayList, origShift, B, null)) continue
+        if (!expOkAfter(ctx, dayList, demand.shiftId, null, null)) continue
         const b: Assignment = {
           date: demand.date,
           shiftId: origShift,
@@ -553,17 +629,20 @@ function repair(
           staffId: B.id,
         }
         applyAssign(ctx, stB, b)
-        dayMap.set(B.id, b)
+        dayList.push(b)
         assignments.push(b)
-        return true
+        filled = true
+        break
       }
+      if (filled) return true
 
       // B が見つからない → A を元に戻す
       removeAssign(ctx, stA, curA)
+      removeFromList(dayList, curA)
       curA.shiftId = origShift
       curA.roleId = origRole
       applyAssign(ctx, stA, curA)
-      dayMap.set(A.id, curA)
+      dayList.push(curA)
     }
 
     return false
@@ -589,20 +668,21 @@ function pickStaff(
   ctx: Ctx,
   demand: SlotDemand,
   states: Map<string, StaffState>,
-  dayMap: Map<string, Assignment>,
+  dayList: Assignment[],
   rng: () => number,
   mustBeExperienced: boolean,
 ): Staff | null {
   const { data } = ctx
   const weights = data.constraints.weights
   const candidates: { staff: Staff; score: number }[] = []
+  const todayIds = dayStaffIds(dayList)
 
   for (const staff of data.staff) {
     // H3: 経験者要件
     if (mustBeExperienced && !isExperienced(staff)) continue
 
     const st = states.get(staff.id)!
-    const hc = hardCheck(ctx, demand, staff, st, dayMap.keys())
+    const hc = hardCheck(ctx, demand, staff, st, todayIds)
     if (!hc.ok) continue
 
     // ---- ソフト制約スコア（低いほど優先） ----
@@ -624,7 +704,7 @@ function pickStaff(
     // S6: なるべく同じ日に入れるペア
     const partners = ctx.together.get(staff.id)
     if (partners) {
-      for (const otherId of dayMap.keys()) {
+      for (const otherId of todayIds) {
         if (partners.has(otherId)) {
           score -= Math.max(1, weights.preference)
           break

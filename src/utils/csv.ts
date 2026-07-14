@@ -13,8 +13,11 @@ export function exportCsv(data: AppData, result: ScheduleResult): void {
   for (const st of data.staff) {
     const row = [st.name]
     for (const date of dates) {
-      const a = result.assignments.find((x) => x.staffId === st.id && x.date === date)
-      row.push(a ? (shiftById.get(a.shiftId)?.name ?? '○') : '')
+      // 分割勤務では同日に複数シフト → 「早番+遅番」のように連結
+      const names = result.assignments
+        .filter((x) => x.staffId === st.id && x.date === date)
+        .map((x) => shiftById.get(x.shiftId)?.name ?? '○')
+      row.push(names.join('+'))
     }
     row.push(String(result.staffLoad[st.id] ?? 0))
     rows.push(row)

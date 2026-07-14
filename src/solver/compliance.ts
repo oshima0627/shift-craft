@@ -1,11 +1,14 @@
 import type { AppData, Assignment, Unfilled, Warning } from '../types'
 import { dayCategoryOf, displayDate, enumerateDates } from '../utils/date'
 import { neededCount } from '../utils/requirements'
+import type { ShiftType } from '../types'
 import {
   isMinorForbidden,
   minToLabel,
   paidMin,
   restBetweenMin,
+  shiftSpan,
+  shiftsOverlap,
   weekKeyOf,
 } from '../utils/time'
 
@@ -169,25 +172,66 @@ export function validateSchedule(
     }
     if (run > limit) pushConsecutiveWarning(warnings, st.name, staffId, runStart, run, limit)
 
-    // 勤務間インターバル（クローピング）
+    // 日ごとにシフトをまとめる（分割勤務対応）
+    const byDate = new Map<string, Assignment[]>()
+    for (const a of sorted) {
+      if (!byDate.has(a.date)) byDate.set(a.date, [])
+      byDate.get(a.date)!.push(a)
+    }
+    const workDates = [...byDate.keys()].sort()
+
+    // 同日の複数シフト：時間帯の重複はエラー、分割勤務OFF時の複数シフトは警告
+    for (const [d, dayAsgs] of byDate) {
+      if (dayAsgs.length < 2) continue
+      let overlap = false
+      for (let i = 0; i < dayAsgs.length && !overlap; i++) {
+        for (let j = i + 1; j < dayAsgs.length; j++) {
+          const s1 = shiftById.get(dayAsgs[i].shiftId)
+          const s2 = shiftById.get(dayAsgs[j].shiftId)
+          if (s1 && s2 && shiftsOverlap(s1, s2)) {
+            overlap = true
+            break
+          }
+        }
+      }
+      if (overlap) {
+        warnings.push({
+          date: d,
+          staffId,
+          kind: 'law',
+          severity: 'error',
+          message: `${st.name}: ${displayDate(d)} に時間帯が重複するシフトが割り当てられています。`,
+        })
+      } else if (!data.constraints.allowSplitShifts) {
+        warnings.push({
+          date: d,
+          staffId,
+          kind: 'staffing',
+          severity: 'warning',
+          message: `${st.name}: ${displayDate(d)} に同日複数シフト。設定で分割勤務は許可されていません。`,
+        })
+      }
+    }
+
+    // 勤務間インターバル（前日の最遅終了シフト → 翌日の最早開始シフト）
     if (restLimitMin > 0) {
-      for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1]
-        const cur = sorted[i]
-        const pi = dateIndex.get(prev.date)
-        const ci = dateIndex.get(cur.date)
+      for (let k = 1; k < workDates.length; k++) {
+        const prevD = workDates[k - 1]
+        const curD = workDates[k]
+        const pi = dateIndex.get(prevD)
+        const ci = dateIndex.get(curD)
         if (pi == null || ci == null || ci - pi !== 1) continue // 隣接日のみ
-        const prevShift = shiftById.get(prev.shiftId)
-        const curShift = shiftById.get(cur.shiftId)
+        const prevShift = latestEnding(byDate.get(prevD)!, shiftById)
+        const curShift = earliestStarting(byDate.get(curD)!, shiftById)
         if (!prevShift || !curShift) continue
         const rest = restBetweenMin(prevShift, curShift)
         if (rest < restLimitMin) {
           warnings.push({
-            date: cur.date,
+            date: curD,
             staffId,
             kind: 'law',
             severity: data.constraints.restIntervalHard ? 'error' : 'warning',
-            message: `${st.name}: ${displayDate(prev.date)}「${prevShift.name}」→ ${displayDate(cur.date)}「${curShift.name}」の休息が${minToLabel(rest)}（推奨${data.constraints.restIntervalHours}時間未満）。遅番→翌早番の連続（クローピング）は疲労蓄積の原因になります。`,
+            message: `${st.name}: ${displayDate(prevD)}「${prevShift.name}」→ ${displayDate(curD)}「${curShift.name}」の休息が${minToLabel(rest)}（推奨${data.constraints.restIntervalHours}時間未満）。遅番→翌早番の連続（クローピング）は疲労蓄積の原因になります。`,
           })
         }
       }
@@ -195,6 +239,44 @@ export function validateSchedule(
   }
 
   return { unfilled, warnings }
+}
+
+/** 同日のシフト群のうち最も遅く終わるシフト */
+function latestEnding(
+  asgs: Assignment[],
+  shiftById: Map<string, ShiftType>,
+): ShiftType | null {
+  let best: ShiftType | null = null
+  let bestEnd = -Infinity
+  for (const a of asgs) {
+    const sh = shiftById.get(a.shiftId)
+    if (!sh) continue
+    const end = shiftSpan(sh).endMin
+    if (end > bestEnd) {
+      bestEnd = end
+      best = sh
+    }
+  }
+  return best
+}
+
+/** 同日のシフト群のうち最も早く始まるシフト */
+function earliestStarting(
+  asgs: Assignment[],
+  shiftById: Map<string, ShiftType>,
+): ShiftType | null {
+  let best: ShiftType | null = null
+  let bestStart = Infinity
+  for (const a of asgs) {
+    const sh = shiftById.get(a.shiftId)
+    if (!sh) continue
+    const start = shiftSpan(sh).startMin
+    if (start < bestStart) {
+      bestStart = start
+      best = sh
+    }
+  }
+  return best
 }
 
 function pushConsecutiveWarning(

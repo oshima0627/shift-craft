@@ -127,6 +127,20 @@ export default function ConstraintsTab() {
               インターバルを厳守する（オフ=警告のみ）
             </label>
           </div>
+          <div className="flex items-start sm:col-span-2">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-brand-500"
+                checked={constraints.allowSplitShifts}
+                onChange={(e) => updateConstraints({ allowSplitShifts: e.target.checked })}
+              />
+              同じ日に複数シフトを許可する（分割勤務）
+              <span className="text-xs text-slate-400">
+                — 早番の後に遅番など、時間帯が重ならなければ同じ人を1日に複数入れられます
+              </span>
+            </label>
+          </div>
         </div>
       </div>
 

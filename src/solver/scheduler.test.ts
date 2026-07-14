@@ -10,6 +10,7 @@ function baseConstraints(overrides: Partial<Constraints> = {}): Constraints {
     restIntervalHours: 0,
     restIntervalHard: false,
     weeklyHoursCap: 40,
+    allowSplitShifts: true,
     weights: { fairness: 1, preference: 1, weekendFairness: 1, cost: 0 },
     customRules: [],
     notes: '',
@@ -337,6 +338,89 @@ describe('generateSchedule', () => {
     const byRole = new Map(res.assignments.map((x) => [x.roleId, x.staffId]))
     expect(byRole.get('r2')).toBe('a') // r2 は A しかできない
     expect(byRole.get('r1')).toBe('b')
+  })
+
+  it('分割勤務ON: 時間帯が重ならなければ同じ人を早番+遅番に入れられる', () => {
+    // 1人しかいないが、早番(09-13)と遅番(14-18)は重ならない → 両方に入れる
+    const data = baseData({
+      shifts: [
+        { id: 'early', name: '早番', start: '09:00', end: '13:00' },
+        { id: 'late', name: '遅番', start: '14:00', end: '18:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
+      staff: [staff('a')],
+      constraints: baseConstraints({ allowSplitShifts: true }),
+    })
+    const res = generateSchedule(data)
+    expect(res.unfilled).toHaveLength(0)
+    const aShifts = res.assignments.filter((x) => x.staffId === 'a' && x.date === '2026-08-03')
+    expect(aShifts).toHaveLength(2)
+    expect(res.warnings.filter((w) => w.severity === 'error')).toHaveLength(0)
+  })
+
+  it('分割勤務OFF: 同じ人を同じ日に2シフト入れない（1つは未充足になる）', () => {
+    const data = baseData({
+      shifts: [
+        { id: 'early', name: '早番', start: '09:00', end: '13:00' },
+        { id: 'late', name: '遅番', start: '14:00', end: '18:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
+      staff: [staff('a')],
+      constraints: baseConstraints({ allowSplitShifts: false }),
+    })
+    const res = generateSchedule(data)
+    const aShifts = res.assignments.filter((x) => x.staffId === 'a' && x.date === '2026-08-03')
+    expect(aShifts).toHaveLength(1)
+    expect(res.unfilled.reduce((n, u) => n + (u.needed - u.filled), 0)).toBe(1)
+  })
+
+  it('分割勤務ON: 時間帯が重なるシフトには同じ人を入れない', () => {
+    // 早番(09-15)と遅番(13-19)は重なる → 1人では両方入れられず1つ未充足
+    const data = baseData({
+      shifts: [
+        { id: 'early', name: '早番', start: '09:00', end: '15:00' },
+        { id: 'late', name: '遅番', start: '13:00', end: '19:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
+      staff: [staff('a')],
+      constraints: baseConstraints({ allowSplitShifts: true }),
+    })
+    const res = generateSchedule(data)
+    const aShifts = res.assignments.filter((x) => x.staffId === 'a')
+    expect(aShifts).toHaveLength(1) // 重なるので片方だけ
+    expect(res.unfilled.reduce((n, u) => n + (u.needed - u.filled), 0)).toBe(1)
+  })
+
+  it('分割勤務でも週の実働時間・連勤などの法令チェックは維持される', () => {
+    // 早番(09-13,実働4h)+遅番(14-18,実働4h)=1日8h。7日で56h→週40h上限で日数制限
+    const data = baseData({
+      shifts: [
+        { id: 'early', name: '早番', start: '09:00', end: '13:00' },
+        { id: 'late', name: '遅番', start: '14:00', end: '18:00' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 'early', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r1', shiftId: 'late', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      period: { start: '2026-08-02', end: '2026-08-08', holidays: [] },
+      staff: [staff('a')],
+      constraints: baseConstraints({ allowSplitShifts: true }),
+    })
+    const res = generateSchedule(data)
+    // 週40h以内・週6日以内・法令エラーなしが守られること
+    expect(res.warnings.filter((w) => w.kind === 'law' && w.severity === 'error')).toHaveLength(0)
   })
 
   it('S3: 土日祝の出勤が概ね公平になる', () => {

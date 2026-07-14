@@ -30,6 +30,8 @@ function defaultConstraints(): Constraints {
     restIntervalHard: false,
     // 法定労働時間 40h（常時10人未満の商業・サービス業は特例で44h）
     weeklyHoursCap: 40,
+    // 早番→遅番など時間帯が重ならなければ同日に複数シフトを許可
+    allowSplitShifts: true,
     weights: { fairness: 1, preference: 1, weekendFairness: 1, cost: 0 },
     customRules: [],
     notes: '',
