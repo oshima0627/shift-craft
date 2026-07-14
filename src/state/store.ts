@@ -163,6 +163,8 @@ interface StoreState {
   addStaff: (name: string) => void
   updateStaff: (id: string, patch: Partial<Staff>) => void
   removeStaff: (id: string) => void
+  /** 希望休（出勤不可日）の1日分をトグルする */
+  toggleUnavailable: (staffId: string, date: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
   // --- 特定日の上書き ---
@@ -273,6 +275,23 @@ export const useStore = create<StoreState>()(
                 (p) => p.a !== id && p.b !== id,
               ),
             },
+          },
+        })),
+
+      toggleUnavailable: (staffId, date) =>
+        set((s) => ({
+          data: {
+            ...s.data,
+            staff: s.data.staff.map((st) => {
+              if (st.id !== staffId) return st
+              const has = st.unavailableDates.includes(date)
+              return {
+                ...st,
+                unavailableDates: has
+                  ? st.unavailableDates.filter((d) => d !== date)
+                  : [...st.unavailableDates, date].sort(),
+              }
+            }),
           },
         })),
 

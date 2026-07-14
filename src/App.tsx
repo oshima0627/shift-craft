@@ -3,18 +3,28 @@ import PeriodTab from './components/PeriodTab'
 import RolesTab from './components/RolesTab'
 import ShiftsTab from './components/ShiftsTab'
 import StaffTab from './components/StaffTab'
+import DayOffCalendar from './components/DayOffCalendar'
 import RequirementsTab from './components/RequirementsTab'
 import ConstraintsTab from './components/ConstraintsTab'
 import GenerateTab from './components/GenerateTab'
 import DataMenu from './components/DataMenu'
 
-type TabId = 'period' | 'roles' | 'shifts' | 'staff' | 'requirements' | 'constraints' | 'generate'
+type TabId =
+  | 'period'
+  | 'roles'
+  | 'shifts'
+  | 'staff'
+  | 'dayoff'
+  | 'requirements'
+  | 'constraints'
+  | 'generate'
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'period', label: '期間', icon: '📅' },
   { id: 'roles', label: '役割', icon: '🏷️' },
   { id: 'shifts', label: '時間帯', icon: '🕒' },
   { id: 'staff', label: 'スタッフ', icon: '👥' },
+  { id: 'dayoff', label: '希望休', icon: '🗓️' },
   { id: 'requirements', label: '必要人数', icon: '🔢' },
   { id: 'constraints', label: '条件', icon: '⚙️' },
   { id: 'generate', label: 'シフト生成', icon: '✨' },
@@ -57,6 +67,7 @@ export default function App() {
         {tab === 'roles' && <RolesTab />}
         {tab === 'shifts' && <ShiftsTab />}
         {tab === 'staff' && <StaffTab />}
+        {tab === 'dayoff' && <DayOffCalendar />}
         {tab === 'requirements' && <RequirementsTab />}
         {tab === 'constraints' && <ConstraintsTab />}
         {tab === 'generate' && <GenerateTab />}
