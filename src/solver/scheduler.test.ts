@@ -25,6 +25,7 @@ function baseData(overrides: Partial<AppData> = {}): AppData {
     requirements: [
       { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
     ],
+    overrides: [],
     constraints: baseConstraints(),
     cost: { salesTarget: null, targetLaborRate: 30, includeWelfare: false },
     period: { start: '2026-08-01', end: '2026-08-07', holidays: [] },
@@ -295,6 +296,47 @@ describe('generateSchedule', () => {
     const week2 = bDates.filter((d) => d >= '2026-08-02').length
     expect(week1).toBeLessThanOrEqual(2)
     expect(week2).toBeLessThanOrEqual(2)
+  })
+
+  it('特定日の上書き: 「この日は◯人」が曜日区分より優先される', () => {
+    const data = baseData({
+      staff: [staff('a'), staff('b'), staff('c')],
+      overrides: [
+        { date: '2026-08-05', roleId: 'r1', shiftId: 's1', count: 3 }, // 平日1名→3名に増員
+        { date: '2026-08-06', roleId: 'r1', shiftId: 's1', count: 0 }, // この日は枠なし
+      ],
+    })
+    const res = generateSchedule(data)
+    expect(res.assignments.filter((x) => x.date === '2026-08-05')).toHaveLength(3)
+    expect(res.assignments.filter((x) => x.date === '2026-08-06')).toHaveLength(0)
+    expect(res.unfilled).toHaveLength(0)
+  })
+
+  it('修復パス: 貪欲法が詰まる配置を同日入れ替えで充足する', () => {
+    // A は r1/r2 両対応、B は r1 のみ。希望シフト優遇で A が先に r1 を取ると
+    // r2 が埋まらない → 修復パスで A を r2 へ移し、B を r1 に入れる
+    const data = baseData({
+      roles: [
+        { id: 'r1', name: 'ホール', color: '#000' },
+        { id: 'r2', name: 'キッチン', color: '#111' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+        { roleId: 'r2', shiftId: 's1', counts: { weekday: 1, saturday: 1, sunday: 1, holiday: 1 } },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-03', holidays: [] },
+      staff: [
+        staff('a', { roleIds: ['r1', 'r2'], allowedShiftIds: ['s1'] }), // 希望一致で優先されがち
+        staff('b', { roleIds: ['r1'] }),
+      ],
+    })
+    // attempts=1 でリスタートに頼らず修復パスだけで解けることを確認
+    const res = generateSchedule(data, 1)
+    expect(res.unfilled).toHaveLength(0)
+    expect(res.assignments).toHaveLength(2)
+    const byRole = new Map(res.assignments.map((x) => [x.roleId, x.staffId]))
+    expect(byRole.get('r2')).toBe('a') // r2 は A しかできない
+    expect(byRole.get('r1')).toBe('b')
   })
 
   it('S3: 土日祝の出勤が概ね公平になる', () => {

@@ -1,5 +1,6 @@
 import type { AppData, Assignment, Unfilled, Warning } from '../types'
 import { dayCategoryOf, displayDate, enumerateDates } from '../utils/date'
+import { neededCount } from '../utils/requirements'
 import {
   isMinorForbidden,
   minToLabel,
@@ -30,7 +31,6 @@ export function validateSchedule(
   const dates = enumerateDates(data.period)
   const staffById = new Map(data.staff.map((s) => [s.id, s]))
   const shiftById = new Map(data.shifts.map((s) => [s.id, s]))
-  const roleById = new Map(data.roles.map((r) => [r.id, r]))
 
   // ---- 1. 人数充足チェック ----
   const countByKey = new Map<string, number>()
@@ -40,19 +40,22 @@ export function validateSchedule(
   }
   for (const date of dates) {
     const category = dayCategoryOf(date, data.period.holidays)
-    for (const req of data.requirements) {
-      const needed = req.counts[category]
-      if (needed <= 0) continue
-      const filled = countByKey.get(`${date}|${req.shiftId}|${req.roleId}`) ?? 0
-      if (filled < needed) {
-        unfilled.push({ date, shiftId: req.shiftId, roleId: req.roleId, needed, filled })
-        warnings.push({
-          date,
-          shiftId: req.shiftId,
-          kind: 'coverage',
-          severity: 'error',
-          message: `${displayDate(date)} ${shiftById.get(req.shiftId)?.name ?? ''} / ${roleById.get(req.roleId)?.name ?? ''}: ${needed}名必要のうち${filled}名のみ（${needed - filled}名不足）`,
-        })
+    for (const role of data.roles) {
+      for (const shift of data.shifts) {
+        // 特定日の上書き ＞ 曜日区分 で必要人数を解決
+        const needed = neededCount(data, date, category, role.id, shift.id)
+        if (needed <= 0) continue
+        const filled = countByKey.get(`${date}|${shift.id}|${role.id}`) ?? 0
+        if (filled < needed) {
+          unfilled.push({ date, shiftId: shift.id, roleId: role.id, needed, filled })
+          warnings.push({
+            date,
+            shiftId: shift.id,
+            kind: 'coverage',
+            severity: 'error',
+            message: `${displayDate(date)} ${shift.name} / ${role.name}: ${needed}名必要のうち${filled}名のみ（${needed - filled}名不足）`,
+          })
+        }
       }
     }
   }

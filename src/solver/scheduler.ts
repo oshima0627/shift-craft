@@ -9,6 +9,7 @@ import type {
   Warning,
 } from '../types'
 import { dayCategoryOf, enumerateDates } from '../utils/date'
+import { neededCount } from '../utils/requirements'
 import {
   isMinorForbidden,
   paidMin,
@@ -20,7 +21,7 @@ import { validateSchedule } from './compliance'
 /**
  * シフト最適化ソルバー（AI/LLM不使用の組合せ最適化）。
  *
- * 方針: 小規模（〜20人/月次）向けに、貪欲法 + 複数回ランダムリスタート
+ * 方針: 小規模（〜20人/月次）向けに、貪欲法 + 修復パス + 複数回ランダムリスタート
  * で「十分に良い」解を高速に求める（商用システムと同じ数理最適化・
  * ヒューリスティクスの系譜。詳細は docs/research.md）。
  *
@@ -38,6 +39,10 @@ import { validateSchedule } from './compliance'
  *  S1 出勤回数の公平化 / S2 希望シフト尊重 / S3 土日祝出勤の公平化
  *  S4 人件費の抑制 / S5 勤務間インターバル（ソフト設定時）
  *  S6 なるべく同じ日に入れるペア
+ *
+ * 必要人数は「特定日の上書き（overrides）＞ 曜日区分」で解決する。
+ * 貪欲構築のあと、埋まらなかったスロットに対して同日内の役割・時間帯の
+ * 入れ替え（深さ1のチェーン移動）を試す修復パスを実行する。
  */
 
 /** 決定的な擬似乱数（seed可能） */
@@ -88,6 +93,10 @@ interface Ctx {
   data: AppData
   dates: string[]
   dateIndex: Map<string, number>
+  categoryByDate: Map<string, DayCategory>
+  weekdayByDate: Map<string, number>
+  weekKeyByDate: Map<string, string>
+  staffById: Map<string, Staff>
   shiftById: Map<string, ShiftType>
   paidMinByShift: Map<string, number>
   incompatible: Set<string>
@@ -188,10 +197,23 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
     }
   }
 
+  const categoryByDate = new Map<string, DayCategory>()
+  const weekdayByDate = new Map<string, number>()
+  const weekKeyByDate = new Map<string, string>()
+  for (const date of dates) {
+    categoryByDate.set(date, dayCategoryOf(date, data.period.holidays))
+    weekdayByDate.set(date, new Date(date + 'T00:00:00').getDay())
+    weekKeyByDate.set(date, weekKeyOf(date))
+  }
+
   return {
     data,
     dates,
     dateIndex: new Map(dates.map((d, i) => [d, i])),
+    categoryByDate,
+    weekdayByDate,
+    weekKeyByDate,
+    staffById: new Map(data.staff.map((s) => [s.id, s])),
     shiftById: new Map(data.shifts.map((s) => [s.id, s])),
     paidMinByShift: new Map(data.shifts.map((s) => [s.id, paidMin(s)])),
     incompatible,
@@ -223,6 +245,147 @@ export function generateSchedule(data: AppData, attempts = 40, seed = 12345): Sc
   return best!
 }
 
+/** 割り当てをスタッフ状態に反映 */
+function applyAssign(ctx: Ctx, st: StaffState, a: Assignment) {
+  st.assignedDates.add(a.date)
+  st.totalAssigned++
+  if (ctx.categoryByDate.get(a.date) !== 'weekday') st.weekendAssigned++
+  st.dayShift.set(a.date, a.shiftId)
+  const wk = ctx.weekKeyByDate.get(a.date)!
+  st.weekMin.set(wk, (st.weekMin.get(wk) ?? 0) + (ctx.paidMinByShift.get(a.shiftId) ?? 0))
+  st.weekDays.set(wk, (st.weekDays.get(wk) ?? 0) + 1)
+}
+
+/** 割り当てをスタッフ状態から除去（applyAssign の逆操作） */
+function removeAssign(ctx: Ctx, st: StaffState, a: Assignment) {
+  st.assignedDates.delete(a.date)
+  st.totalAssigned--
+  if (ctx.categoryByDate.get(a.date) !== 'weekday') st.weekendAssigned--
+  st.dayShift.delete(a.date)
+  const wk = ctx.weekKeyByDate.get(a.date)!
+  st.weekMin.set(wk, (st.weekMin.get(wk) ?? 0) - (ctx.paidMinByShift.get(a.shiftId) ?? 0))
+  st.weekDays.set(wk, (st.weekDays.get(wk) ?? 0) - 1)
+}
+
+interface HardCheck {
+  ok: boolean
+  /** ソフト運用時のインターバル抵触数（前日・翌日それぞれ最大1） */
+  restViolations: number
+}
+
+const NG: HardCheck = { ok: false, restViolations: 0 }
+
+/**
+ * ハード制約 H1〜H11 を判定する（H3 経験者最低数はグループ制約のため呼び出し側で扱う）。
+ */
+function hardCheck(
+  ctx: Ctx,
+  demand: SlotDemand,
+  staff: Staff,
+  st: StaffState,
+  assignedToday: Iterable<string>,
+): HardCheck {
+  const { data } = ctx
+  const shift = ctx.shiftById.get(demand.shiftId)!
+
+  // H1: 役割を担当できるか
+  if (!staff.roleIds.includes(demand.roleId)) return NG
+  // H6: すでに今日どこかに入っている（1人1日1シフト）
+  if (st.dayShift.has(demand.date)) return NG
+  // H4: 出勤不可日・希望休
+  if (staff.unavailableDates.includes(demand.date)) return NG
+  // シフト時間帯の制限（本人設定）
+  if (staff.allowedShiftIds.length > 0 && !staff.allowedShiftIds.includes(demand.shiftId)) return NG
+  // H7: 年少者の深夜禁止（労基法61条）
+  if (staff.isMinor && isMinorForbidden(shift)) return NG
+
+  // H11: カスタム条件
+  const rules = ctx.rulesByStaff.get(staff.id)
+  if (rules) {
+    if (rules.forbiddenWeekdays.has(demand.weekday)) return NG
+    if (rules.forbiddenShifts.has(demand.shiftId)) return NG
+    if (rules.onlyShifts && !rules.onlyShifts.has(demand.shiftId)) return NG
+    const fixed = rules.fixByWeekday.get(demand.weekday)
+    if (fixed && fixed !== demand.shiftId) return NG
+  }
+
+  // H5: 出勤上限
+  if (staff.maxShifts != null && st.totalAssigned >= staff.maxShifts) return NG
+  // H5: 連勤上限（本人設定 > カスタム条件 > 全体既定）
+  const consLimit =
+    staff.maxConsecutive ?? rules?.maxConsecutive ?? data.constraints.maxConsecutiveDefault
+  {
+    const tentative = new Set(st.assignedDates)
+    tentative.add(demand.date)
+    if (consecutiveRunLength(tentative, demand.date, ctx.dates) > consLimit) return NG
+  }
+  // H8: 週の労働時間上限（年少者は40h厳守）
+  const shiftPaid = ctx.paidMinByShift.get(demand.shiftId) ?? 0
+  const capH = staff.isMinor
+    ? Math.min(40, data.constraints.weeklyHoursCap)
+    : Math.min(staff.weeklyMaxHours ?? Infinity, data.constraints.weeklyHoursCap)
+  if ((st.weekMin.get(demand.weekKey) ?? 0) + shiftPaid > capH * 60) return NG
+  // H9: 週の出勤日数上限（法定週1休→最大6日、本人設定・カスタム条件があれば優先）
+  const capDays = Math.min(staff.weeklyMaxDays ?? Infinity, rules?.maxDaysPerWeek ?? Infinity, 6)
+  if ((st.weekDays.get(demand.weekKey) ?? 0) + 1 > capDays) return NG
+
+  // H2: NGペア（今日既に入っている人と衝突しないか）
+  for (const otherId of assignedToday) {
+    if (otherId === staff.id) continue
+    if (ctx.incompatible.has(pairKey(staff.id, otherId))) return NG
+  }
+
+  // 勤務間インターバル（前日・翌日の割り当てとの休息時間）
+  let restViolations = 0
+  if (ctx.restLimitMin > 0) {
+    const idx = ctx.dateIndex.get(demand.date)!
+    const prevDate = ctx.dates[idx - 1]
+    const nextDate = ctx.dates[idx + 1]
+    const prevShiftId = prevDate ? st.dayShift.get(prevDate) : undefined
+    const nextShiftId = nextDate ? st.dayShift.get(nextDate) : undefined
+    if (prevShiftId) {
+      const prevShift = ctx.shiftById.get(prevShiftId)!
+      if (restBetweenMin(prevShift, shift) < ctx.restLimitMin) restViolations++
+    }
+    if (nextShiftId) {
+      const nextShift = ctx.shiftById.get(nextShiftId)!
+      if (restBetweenMin(shift, nextShift) < ctx.restLimitMin) restViolations++
+    }
+    // H10: ハード設定ならインターバル違反となる割り当ては行わない
+    if (data.constraints.restIntervalHard && restViolations > 0) return NG
+  }
+
+  return { ok: true, restViolations }
+}
+
+/**
+ * (date, shiftId) グループの経験者最低数チェック。
+ * addStaff を加え removeId を除いた構成で判定する。
+ */
+function expOkAfter(
+  ctx: Ctx,
+  dayMap: Map<string, Assignment>,
+  shiftId: string,
+  addStaff: Staff | null,
+  removeId: string | null,
+): boolean {
+  const minExp = ctx.data.constraints.minExperiencedPerShift
+  if (minExp <= 0) return true
+  let size = 0
+  let exp = 0
+  for (const [staffId, a] of dayMap) {
+    if (a.shiftId !== shiftId || staffId === removeId) continue
+    size++
+    if (isExperienced(ctx.staffById.get(staffId)!)) exp++
+  }
+  if (addStaff) {
+    size++
+    if (isExperienced(addStaff)) exp++
+  }
+  if (size === 0) return true
+  return exp >= Math.min(minExp, size)
+}
+
 function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
   const { data, dates } = ctx
   const states = new Map<string, StaffState>()
@@ -238,18 +401,22 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
   }
 
   const assignments: Assignment[] = []
+  const assignedByDate = new Map<string, Map<string, Assignment>>()
+  const missed: SlotDemand[] = []
 
   for (const date of dates) {
-    const category = dayCategoryOf(date, data.period.holidays)
-    const weekday = new Date(date + 'T00:00:00').getDay()
-    const weekKey = weekKeyOf(date)
-    const assignedToday = new Set<string>()
+    const category = ctx.categoryByDate.get(date)!
+    const weekday = ctx.weekdayByDate.get(date)!
+    const weekKey = ctx.weekKeyByDate.get(date)!
+    const dayMap = new Map<string, Assignment>()
+    assignedByDate.set(date, dayMap)
 
     for (const shift of data.shifts) {
-      const roleNeeds = data.requirements
-        .filter((r) => r.shiftId === shift.id && r.counts[category] > 0)
-        .map((r) => ({ roleId: r.roleId, needed: r.counts[category] }))
-
+      const roleNeeds: { roleId: string; needed: number }[] = []
+      for (const role of data.roles) {
+        const needed = neededCount(data, date, category, role.id, shift.id)
+        if (needed > 0) roleNeeds.push({ roleId: role.id, needed })
+      }
       if (roleNeeds.length === 0) continue
 
       const demands: SlotDemand[] = []
@@ -260,34 +427,35 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
       }
 
       let expNeeded = Math.min(data.constraints.minExperiencedPerShift, demands.length)
-      const assignedThisShift: string[] = []
 
       for (let di = 0; di < demands.length; di++) {
         const demand = demands[di]
         const remainingSlots = demands.length - di
         const mustBeExperienced = expNeeded >= remainingSlots
 
-        const chosen = pickStaff(ctx, demand, states, assignedToday, rng, mustBeExperienced)
+        const chosen = pickStaff(ctx, demand, states, dayMap, rng, mustBeExperienced)
 
         if (chosen) {
-          const st = states.get(chosen.id)!
-          st.assignedDates.add(date)
-          st.totalAssigned++
-          if (category !== 'weekday') st.weekendAssigned++
-          st.dayShift.set(date, shift.id)
-          st.weekMin.set(
-            demand.weekKey,
-            (st.weekMin.get(demand.weekKey) ?? 0) + (ctx.paidMinByShift.get(shift.id) ?? 0),
-          )
-          st.weekDays.set(demand.weekKey, (st.weekDays.get(demand.weekKey) ?? 0) + 1)
-          assignedToday.add(chosen.id)
-          assignedThisShift.push(chosen.id)
-          assignments.push({ date, shiftId: shift.id, roleId: demand.roleId, staffId: chosen.id })
+          const a: Assignment = {
+            date,
+            shiftId: shift.id,
+            roleId: demand.roleId,
+            staffId: chosen.id,
+          }
+          applyAssign(ctx, states.get(chosen.id)!, a)
+          dayMap.set(chosen.id, a)
+          assignments.push(a)
           if (isExperienced(chosen) && expNeeded > 0) expNeeded--
+        } else {
+          missed.push(demand)
         }
-        // 充足できなかった分は最後に validateSchedule が unfilled として報告する
       }
     }
+  }
+
+  // 修復パス: 埋まらなかったスロットを同日内の入れ替えで充足を試みる
+  if (missed.length > 0) {
+    repair(ctx, states, assignments, assignedByDate, missed)
   }
 
   // 検証（人数不足・法令・運用の警告を一括生成。手動編集後と同じ基準）
@@ -302,6 +470,118 @@ function runOnce(ctx: Ctx, rng: () => number): ScheduleResult {
 }
 
 /**
+ * 修復パス。未充足スロットごとに:
+ *  (a) 直接割り当て（構築後の状態で再試行）
+ *  (b) 深さ1のチェーン移動: 同日の別スロットにいる A を未充足スロットへ移し、
+ *      空いた元スロットに未出勤の B を入れる
+ * を試す。改善がなくなるまで最大4パス繰り返す。
+ */
+function repair(
+  ctx: Ctx,
+  states: Map<string, StaffState>,
+  assignments: Assignment[],
+  assignedByDate: Map<string, Map<string, Assignment>>,
+  missed: SlotDemand[],
+) {
+  const { data } = ctx
+
+  const tryFill = (demand: SlotDemand): boolean => {
+    const dayMap = assignedByDate.get(demand.date)!
+
+    // (a) 直接割り当て
+    for (const staff of data.staff) {
+      if (dayMap.has(staff.id)) continue
+      const st = states.get(staff.id)!
+      if (!hardCheck(ctx, demand, staff, st, dayMap.keys()).ok) continue
+      if (!expOkAfter(ctx, dayMap, demand.shiftId, staff, null)) continue
+      const a: Assignment = {
+        date: demand.date,
+        shiftId: demand.shiftId,
+        roleId: demand.roleId,
+        staffId: staff.id,
+      }
+      applyAssign(ctx, st, a)
+      dayMap.set(staff.id, a)
+      assignments.push(a)
+      return true
+    }
+
+    // (b) チェーン移動（A を未充足スロットへ、B を A の元スロットへ）
+    for (const A of data.staff) {
+      const curA = dayMap.get(A.id)
+      if (!curA) continue
+      if (curA.shiftId === demand.shiftId && curA.roleId === demand.roleId) continue
+      const stA = states.get(A.id)!
+      const origShift = curA.shiftId
+      const origRole = curA.roleId
+
+      // A をいったん外して、未充足スロットに入れるか確認
+      removeAssign(ctx, stA, curA)
+      dayMap.delete(A.id)
+
+      const moveOk =
+        hardCheck(ctx, demand, A, stA, dayMap.keys()).ok &&
+        expOkAfter(ctx, dayMap, demand.shiftId, A, null) &&
+        // A が抜けた元グループが（B を入れる前でも）成立し得るかは B 追加後に判定
+        true
+
+      if (!moveOk) {
+        // 戻す
+        dayMap.set(A.id, curA)
+        applyAssign(ctx, stA, curA)
+        continue
+      }
+
+      // A を未充足スロットへ移動（同じオブジェクトを書き換え）
+      curA.shiftId = demand.shiftId
+      curA.roleId = demand.roleId
+      applyAssign(ctx, stA, curA)
+      dayMap.set(A.id, curA)
+
+      // 元スロットに入れる B を探す
+      const origDemand: SlotDemand = { ...demand, shiftId: origShift, roleId: origRole }
+      for (const B of data.staff) {
+        if (B.id === A.id || dayMap.has(B.id)) continue
+        const stB = states.get(B.id)!
+        if (!hardCheck(ctx, origDemand, B, stB, dayMap.keys()).ok) continue
+        if (!expOkAfter(ctx, dayMap, origShift, B, null)) continue
+        if (!expOkAfter(ctx, dayMap, demand.shiftId, null, null)) continue
+        const b: Assignment = {
+          date: demand.date,
+          shiftId: origShift,
+          roleId: origRole,
+          staffId: B.id,
+        }
+        applyAssign(ctx, stB, b)
+        dayMap.set(B.id, b)
+        assignments.push(b)
+        return true
+      }
+
+      // B が見つからない → A を元に戻す
+      removeAssign(ctx, stA, curA)
+      curA.shiftId = origShift
+      curA.roleId = origRole
+      applyAssign(ctx, stA, curA)
+      dayMap.set(A.id, curA)
+    }
+
+    return false
+  }
+
+  for (let pass = 0; pass < 4; pass++) {
+    let progress = false
+    for (let i = missed.length - 1; i >= 0; i--) {
+      if (tryFill(missed[i])) {
+        missed.splice(i, 1)
+        progress = true
+      }
+    }
+    if (!progress || missed.length === 0) break
+  }
+}
+
+/**
  * 1スロットに割り当てるスタッフを選ぶ。
  * ハード制約を満たす候補の中から、ソフト制約に基づくスコアで最良を選ぶ。
  */
@@ -309,89 +589,21 @@ function pickStaff(
   ctx: Ctx,
   demand: SlotDemand,
   states: Map<string, StaffState>,
-  assignedToday: Set<string>,
+  dayMap: Map<string, Assignment>,
   rng: () => number,
   mustBeExperienced: boolean,
 ): Staff | null {
   const { data } = ctx
-  const shift = ctx.shiftById.get(demand.shiftId)!
-  const shiftPaid = ctx.paidMinByShift.get(demand.shiftId) ?? 0
   const weights = data.constraints.weights
   const candidates: { staff: Staff; score: number }[] = []
 
   for (const staff of data.staff) {
-    // H1: 役割を担当できるか
-    if (!staff.roleIds.includes(demand.roleId)) continue
     // H3: 経験者要件
     if (mustBeExperienced && !isExperienced(staff)) continue
-    // H6: すでに今日どこかに入っている（1人1日1シフト）
-    if (assignedToday.has(staff.id)) continue
-    // H4: 出勤不可日・希望休
-    if (staff.unavailableDates.includes(demand.date)) continue
-    // シフト時間帯の制限（本人設定）
-    if (staff.allowedShiftIds.length > 0 && !staff.allowedShiftIds.includes(demand.shiftId)) continue
-    // H7: 年少者の深夜禁止（労基法61条）
-    if (staff.isMinor && isMinorForbidden(shift)) continue
-
-    // H11: カスタム条件
-    const rules = ctx.rulesByStaff.get(staff.id)
-    if (rules) {
-      if (rules.forbiddenWeekdays.has(demand.weekday)) continue
-      if (rules.forbiddenShifts.has(demand.shiftId)) continue
-      if (rules.onlyShifts && !rules.onlyShifts.has(demand.shiftId)) continue
-      const fixed = rules.fixByWeekday.get(demand.weekday)
-      if (fixed && fixed !== demand.shiftId) continue
-    }
 
     const st = states.get(staff.id)!
-    // H5: 出勤上限
-    if (staff.maxShifts != null && st.totalAssigned >= staff.maxShifts) continue
-    // H5: 連勤上限（本人設定 > カスタム条件 > 全体既定）
-    const consLimit =
-      staff.maxConsecutive ?? rules?.maxConsecutive ?? data.constraints.maxConsecutiveDefault
-    {
-      const tentative = new Set(st.assignedDates)
-      tentative.add(demand.date)
-      if (consecutiveRunLength(tentative, demand.date, ctx.dates) > consLimit) continue
-    }
-    // H8: 週の労働時間上限（年少者は40h厳守）
-    const capH = staff.isMinor
-      ? Math.min(40, data.constraints.weeklyHoursCap)
-      : Math.min(staff.weeklyMaxHours ?? Infinity, data.constraints.weeklyHoursCap)
-    if ((st.weekMin.get(demand.weekKey) ?? 0) + shiftPaid > capH * 60) continue
-    // H9: 週の出勤日数上限（法定週1休→最大6日、本人設定・カスタム条件があれば優先）
-    const capDays = Math.min(staff.weeklyMaxDays ?? Infinity, rules?.maxDaysPerWeek ?? Infinity, 6)
-    if ((st.weekDays.get(demand.weekKey) ?? 0) + 1 > capDays) continue
-
-    // H2: NGペア（今日既に入っている人と衝突しないか）
-    let conflict = false
-    for (const otherId of assignedToday) {
-      if (ctx.incompatible.has(pairKey(staff.id, otherId))) {
-        conflict = true
-        break
-      }
-    }
-    if (conflict) continue
-
-    // 勤務間インターバル（前日・翌日の割り当てとの休息時間）
-    let restViolations = 0
-    if (ctx.restLimitMin > 0) {
-      const idx = ctx.dateIndex.get(demand.date)!
-      const prevDate = ctx.dates[idx - 1]
-      const nextDate = ctx.dates[idx + 1]
-      const prevShiftId = prevDate ? st.dayShift.get(prevDate) : undefined
-      const nextShiftId = nextDate ? st.dayShift.get(nextDate) : undefined
-      if (prevShiftId) {
-        const prevShift = ctx.shiftById.get(prevShiftId)!
-        if (restBetweenMin(prevShift, shift) < ctx.restLimitMin) restViolations++
-      }
-      if (nextShiftId) {
-        const nextShift = ctx.shiftById.get(nextShiftId)!
-        if (restBetweenMin(shift, nextShift) < ctx.restLimitMin) restViolations++
-      }
-      // H10: ハード設定ならインターバル違反となる割り当ては行わない
-      if (data.constraints.restIntervalHard && restViolations > 0) continue
-    }
+    const hc = hardCheck(ctx, demand, staff, st, dayMap.keys())
+    if (!hc.ok) continue
 
     // ---- ソフト制約スコア（低いほど優先） ----
     let score = 0
@@ -408,11 +620,11 @@ function pickStaff(
     // S4: 人件費 — 時給の低い人をやや優先
     score += (staff.hourlyWage / 1000) * weights.cost * 0.5
     // S5: インターバル（ソフト時）— クローピングになる割り当てを避ける
-    score += restViolations * 3
+    score += hc.restViolations * 3
     // S6: なるべく同じ日に入れるペア
     const partners = ctx.together.get(staff.id)
     if (partners) {
-      for (const otherId of assignedToday) {
+      for (const otherId of dayMap.keys()) {
         if (partners.has(otherId)) {
           score -= Math.max(1, weights.preference)
           break
@@ -420,7 +632,9 @@ function pickStaff(
       }
     }
     // 曜日固定に合致する割り当ては強く優遇
-    if (rules?.fixByWeekday.get(demand.weekday) === demand.shiftId) score -= 3
+    if (ctx.rulesByStaff.get(staff.id)?.fixByWeekday.get(demand.weekday) === demand.shiftId) {
+      score -= 3
+    }
     // 経験者は経験者が本当に必要な時のために温存（軽いペナルティ）
     if (!mustBeExperienced && isExperienced(staff)) score += 0.3
     // タイブレーク用の微小ランダム
@@ -467,10 +681,9 @@ function computeScore(
   }
   // 人件費（重み付き）
   if (weights.cost > 0) {
-    const staffById = new Map(data.staff.map((s) => [s.id, s]))
     let cost = 0
     for (const a of assignments) {
-      const st = staffById.get(a.staffId)
+      const st = ctx.staffById.get(a.staffId)
       const paid = ctx.paidMinByShift.get(a.shiftId) ?? 0
       if (st) cost += (paid / 60) * st.hourlyWage
     }

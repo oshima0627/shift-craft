@@ -6,6 +6,7 @@ import type {
   CostSettings,
   PeriodSettings,
   Requirement,
+  RequirementOverride,
   Role,
   ShiftType,
   Staff,
@@ -72,6 +73,7 @@ function defaultData(): AppData {
     shifts: [s1, s2],
     staff,
     requirements,
+    overrides: [],
     constraints: defaultConstraints(),
     cost: defaultCost(),
     period,
@@ -140,6 +142,7 @@ export function normalizeData(raw: unknown): AppData {
     shifts: d.shifts ?? base.shifts,
     staff,
     requirements: d.requirements ?? base.requirements,
+    overrides: d.overrides ?? [],
     constraints,
     cost,
     period: { ...base.period, ...(d.period ?? {}) },
@@ -162,6 +165,9 @@ interface StoreState {
   removeStaff: (id: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
+  // --- 特定日の上書き ---
+  setOverride: (override: RequirementOverride) => void
+  removeOverride: (override: Pick<RequirementOverride, 'date' | 'roleId' | 'shiftId'>) => void
   // --- Constraints ---
   updateConstraints: (patch: Partial<Constraints>) => void
   // --- Cost ---
@@ -282,6 +288,25 @@ export const useStore = create<StoreState>()(
             : [...s.data.requirements, { roleId, shiftId, counts }]
           return { data: { ...s.data, requirements } }
         }),
+
+      setOverride: (override) =>
+        set((s) => {
+          const others = s.data.overrides.filter(
+            (o) =>
+              !(o.date === override.date && o.roleId === override.roleId && o.shiftId === override.shiftId),
+          )
+          return { data: { ...s.data, overrides: [...others, override].sort((a, b) => a.date.localeCompare(b.date)) } }
+        }),
+      removeOverride: (target) =>
+        set((s) => ({
+          data: {
+            ...s.data,
+            overrides: s.data.overrides.filter(
+              (o) =>
+                !(o.date === target.date && o.roleId === target.roleId && o.shiftId === target.shiftId),
+            ),
+          },
+        })),
 
       updateConstraints: (patch) =>
         set((s) => ({ data: { ...s.data, constraints: { ...s.data.constraints, ...patch } } })),

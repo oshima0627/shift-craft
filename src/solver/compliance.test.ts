@@ -41,6 +41,7 @@ function data(overrides: Partial<AppData> = {}): AppData {
       },
     ],
     requirements: [],
+    overrides: [],
     constraints: {
       incompatiblePairs: [],
       minExperiencedPerShift: 1,

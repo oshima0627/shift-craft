@@ -79,6 +79,17 @@ export interface IncompatiblePair {
   b: string // staffId
 }
 
+/**
+ * 特定日の必要人数の上書き。
+ * 「この日は◯人」を曜日区分より優先して適用する（イベント日・繁忙日など）。
+ */
+export interface RequirementOverride {
+  date: string // "yyyy-MM-dd"
+  roleId: string
+  shiftId: string
+  count: number
+}
+
 // ===== カスタム条件（自然文→構造化ルール） =====
 
 export type ParsedRule =
@@ -156,6 +167,8 @@ export interface AppData {
   shifts: ShiftType[]
   staff: Staff[]
   requirements: Requirement[]
+  /** 特定日の必要人数の上書き */
+  overrides: RequirementOverride[]
   constraints: Constraints
   cost: CostSettings
   period: PeriodSettings
