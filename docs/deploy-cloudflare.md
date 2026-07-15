@@ -144,8 +144,30 @@ npm run deploy   # = npm run build && wrangler deploy
 ## 6. 動作確認
 
 1. 本番URLを開く → Access のメール認証 → アプリが表示される
-2. 右上「⋯ データ」→「☁️ クラウドに保存」→ 保存日時が表示されればOK
-3. 別ブラウザ（同じメールで認証）で「☁️ クラウドから読込」→ 同じ設定が復元される
+2. 右上「⋯ データ」→「クラウドに保存」→ 保存日時が表示されればOK
+3. 別ブラウザ（同じメールで認証）で「クラウドから読込」→ 同じ設定が復元される
+
+## 7. AI解釈を有効にする（任意）
+
+「条件」タブの自由文入力を **Claude（Opus 4.8 / Sonnet 5 を切り替え可能）** で解釈させる機能です。
+使う場合のみ、Anthropic の APIキーを **Worker のシークレット** として設定します
+（ブラウザ側には保存されません）。未設定でもルールベースの解釈はそのまま使えます。
+
+**コマンドライン（wrangler）:**
+
+```bash
+npx -y wrangler secret put ANTHROPIC_API_KEY
+# プロンプトに APIキー（sk-ant-... ）を貼り付けて Enter
+```
+
+**ダッシュボード:** Workers & Pages → 対象の Worker → **Settings → Variables and Secrets**
+→ **Add** → 種類を **Secret** にして、Name: `ANTHROPIC_API_KEY` / Value: APIキー を保存。
+
+設定後は再デプロイ不要で反映されます（次のリクエストから有効）。切り替えたいモデルは
+アプリの「条件」タブのプルダウンで選べます（既定は Opus 4.8）。
+
+> APIキーの取得: [Anthropic Console](https://console.anthropic.com/) → API Keys。
+> 課金はAPI利用分のみ。解釈1回あたりごく少量のトークンしか使いません。
 
 ## 運用メモ
 

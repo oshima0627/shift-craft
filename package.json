@@ -13,6 +13,7 @@
     "deploy": "npm run build && npx -y wrangler deploy"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.111.0",
     "date-fns": "^3.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

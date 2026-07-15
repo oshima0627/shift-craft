@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
+import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
 
 export default function ConstraintsTab() {
   const staff = useStore((s) => s.data.staff)
@@ -11,6 +12,8 @@ export default function ConstraintsTab() {
   const [pairB, setPairB] = useState('')
   const [ruleText, setRuleText] = useState('')
   const [ruleFeedback, setRuleFeedback] = useState<string | null>(null)
+  const [aiModel, setAiModel] = useState<string>(() => getSelectedModel())
+  const [aiBusy, setAiBusy] = useState(false)
 
   const nameOf = (id: string) => staff.find((s) => s.id === id)?.name ?? '(不明)'
 
@@ -45,6 +48,37 @@ export default function ConstraintsTab() {
       ],
     })
     setRuleFeedback(result.parsed ? `解釈: ${result.description}` : `未解釈: ${result.description}`)
+    setRuleText('')
+  }
+
+  const changeModel = (model: string) => {
+    setAiModel(model)
+    setSelectedModel(model)
+  }
+
+  const addWithAi = async () => {
+    const text = ruleText.trim()
+    if (!text || aiBusy) return
+    setAiBusy(true)
+    setRuleFeedback('AIで解釈中…')
+    const outcome = await aiParseRule(text, staff, shifts, aiModel)
+    setAiBusy(false)
+    if (!outcome.ok) {
+      const msg =
+        outcome.kind === 'not_configured'
+          ? 'AI解釈は利用できません（サーバーにAPIキーが未設定です）。'
+          : outcome.kind === 'unauthorized'
+            ? 'AI解釈にはログインが必要です。'
+            : 'AI解釈に失敗しました。通信状況を確認してください。'
+      setRuleFeedback(`⚠ ${msg}`)
+      return
+    }
+    const { parsed, description } = outcome.result
+    updateConstraints({
+      customRules: [...constraints.customRules, { id: newId('rule'), text, parsed }],
+    })
+    const modelLabel = AI_MODELS.find((m) => m.id === aiModel)?.label ?? aiModel
+    setRuleFeedback(parsed ? `AI解釈（${modelLabel}）: ${description}` : `AI（未解釈）: ${description}`)
     setRuleText('')
   }
 
@@ -229,10 +263,10 @@ export default function ConstraintsTab() {
 
       {/* カスタム条件（自然文） */}
       <div className="card space-y-3">
-        <div>
+        <div className="space-y-1">
           <h3 className="section-title">その他の条件（文章で入力）</h3>
           <p className="section-desc">
-            文章で書くとルールベース（AI不使用）で自動解釈します。例:
+            文章で書くと自動でルールに変換します。例:
             「田中と佐藤は同じ日に入れない」「高橋は火曜は休み」「伊藤は週3日まで」
             「鈴木は遅番に入れない」「田中は金曜は早番固定」「佐藤は4連勤まで」
           </p>
@@ -244,11 +278,36 @@ export default function ConstraintsTab() {
             value={ruleText}
             onChange={(e) => setRuleText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addCustomRule()}
+            disabled={aiBusy}
           />
-          <button className="btn-primary" onClick={addCustomRule}>
+          <button className="btn-primary" onClick={addCustomRule} disabled={aiBusy}>
             追加
           </button>
         </div>
+
+        {/* AI解釈（複雑な文はこちら。モデルを切り替え可能） */}
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <span className="text-sm text-slate-600">
+            うまく変換されないときは <b>AIで解釈</b>：
+          </span>
+          <select
+            className="input max-w-[13rem]"
+            value={aiModel}
+            onChange={(e) => changeModel(e.target.value)}
+            disabled={aiBusy}
+            title="使用するAIモデルを切り替えます"
+          >
+            {AI_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}（{m.hint}）
+              </option>
+            ))}
+          </select>
+          <button className="btn-ghost btn-sm" onClick={addWithAi} disabled={aiBusy || !ruleText.trim()}>
+            {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
+          </button>
+        </div>
+
         {ruleFeedback && <p className="text-sm font-medium text-slate-600">{ruleFeedback}</p>}
         <div className="space-y-1.5">
           {constraints.customRules.map((r) => (
