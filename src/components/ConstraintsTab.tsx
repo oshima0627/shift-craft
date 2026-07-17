@@ -15,14 +15,15 @@ interface RuleTypeMeta {
   label: string
   needs: { a?: boolean; b?: boolean; weekday?: boolean; shift?: boolean; num?: 'week' | 'cons' }
 }
+// 他の画面で設定できる条件は重複を避けてここには載せない:
+//  - 同じ日に入れない（NGペア）→ 下の「NGペア」欄（厳守トグル付き）
+//  - 特定のシフトに入れない／だけに入れる → スタッフ設定「割り当て可能なシフト時間帯」
+//  - 週N日まで → スタッフ設定「週の出勤日数上限」
+//  - N連勤まで → スタッフ設定「連勤上限」
+// ここには「他に設定場所がない」条件だけを残す。
 const RULE_TYPE_META: RuleTypeMeta[] = [
-  { kind: 'pairAvoid', label: '同じ日に入れない（NGペア）', needs: { a: true, b: true } },
   { kind: 'pairTogether', label: 'なるべく同じ日に入れる', needs: { a: true, b: true } },
   { kind: 'forbidWeekday', label: '特定の曜日は休み', needs: { a: true, weekday: true } },
-  { kind: 'forbidShift', label: '特定のシフトに入れない', needs: { a: true, shift: true } },
-  { kind: 'onlyShift', label: '特定のシフトだけに入れる', needs: { a: true, shift: true } },
-  { kind: 'maxDaysPerWeek', label: '週N日まで', needs: { a: true, num: 'week' } },
-  { kind: 'maxConsecutive', label: 'N連勤まで', needs: { a: true, num: 'cons' } },
   { kind: 'fixWeekdayShift', label: '特定の曜日はシフト固定', needs: { a: true, weekday: true, shift: true } },
 ]
 
@@ -45,7 +46,7 @@ export default function ConstraintsTab() {
     })
   }, [])
   // 項目から追加（かんたん）フォームの状態
-  const [rKind, setRKind] = useState<RuleKind>('pairAvoid')
+  const [rKind, setRKind] = useState<RuleKind>('pairTogether')
   const [rStaffA, setRStaffA] = useState('')
   const [rStaffB, setRStaffB] = useState('')
   const [rWeekday, setRWeekday] = useState('') // '0'〜'6'
@@ -393,6 +394,10 @@ export default function ConstraintsTab() {
         {/* 項目から追加（かんたん・確実） */}
         <div className="space-y-3 rounded-xl border border-slate-200 p-3">
           <p className="text-sm font-semibold text-slate-700">項目から追加（かんたん）</p>
+          <p className="section-desc">
+            「NGペア（同じ日に入れない）」は下のNGペア欄、「入れるシフトの限定・週の出勤日数・連勤の上限」は
+            スタッフ設定でそれぞれ設定できます。ここには他に設定場所がない条件だけを用意しています。
+          </p>
           {staff.length === 0 ? (
             <p className="text-sm text-slate-400">先に「スタッフ」を登録してください。</p>
           ) : (
