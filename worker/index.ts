@@ -54,6 +54,12 @@ export interface Env {
   STRIPE_PRICE_YEARLY?: string
   /** 決済後の戻り先ベースURL（未設定はリクエストのoriginを使用） */
   APP_URL?: string
+  /**
+   * Resend APIキー（`wrangler secret put RESEND_API_KEY`）。
+   * 申請者（任意のメールアドレス）への承認通知メール送信に使う。
+   * 未設定でも承認自体は動く（メールだけ送らない）。
+   */
+  RESEND_API_KEY?: string
 }
 
 /** Stripe 関連の設定（env から集約） */
@@ -259,6 +265,29 @@ async function sendApprovalMail(
   })
   const email = new EmailMessage(MAIL_FROM, ADMIN_EMAIL, msg.asRaw())
   await binding.send(email)
+}
+
+/**
+ * Resend（外部配信サービス）経由で任意のメールアドレスにメールを送る。
+ * Cloudflare Email Routing は検証済みの自分のアドレス宛にしか送れないため、
+ * 不特定の申請者への通知には Resend を使う。キー未設定なら送らず false を返す。
+ */
+async function sendViaResend(
+  apiKey: string | undefined,
+  to: string,
+  subject: string,
+  text: string,
+): Promise<boolean> {
+  if (!apiKey) return false
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ from: `ShiftCraft <${MAIL_FROM}>`, to, subject, text }),
+  })
+  return res.ok
 }
 
 /** 承認/却下の結果をブラウザに返す簡易HTMLページ */
@@ -786,6 +815,7 @@ export async function handleApi(
   apiKey?: string,
   sendEmail?: SendEmailBinding,
   stripe?: StripeConfig,
+  resendKey?: string,
 ): Promise<Response> {
   await ensureSchema(db)
   const url = new URL(request.url)
@@ -928,9 +958,35 @@ export async function handleApi(
         .prepare("UPDATE users SET status = 'active' WHERE username = ?1 AND status = 'pending'")
         .bind(v.sub)
         .run()
+      // 申請者へ承認通知メールを送る（Resend。キー未設定・失敗でも承認自体は成立）
+      let notified = false
+      try {
+        const applicant = await getUser(db, v.sub)
+        const to = applicant?.email || v.sub // email=ID 運用のため username がメールのこともある
+        if (to && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+          notified = await sendViaResend(
+            resendKey,
+            to,
+            '【ShiftCraft】登録が承認されました',
+            [
+              'ShiftCraft への登録申請が承認されました。',
+              '',
+              '下記のログインページから、申請時のメールアドレス（ID）とパスワードでログインできます。',
+              url.origin + '/',
+              '',
+              `ログインID: ${v.sub}`,
+              '',
+              'ご利用ありがとうございます。',
+            ].join('\n'),
+          )
+        }
+      } catch {
+        notified = false
+      }
       return htmlPage(
         '承認しました',
-        `ユーザー「${v.sub}」を承認しました。本人はこのIDとパスワードでログインできます。`,
+        `ユーザー「${v.sub}」を承認しました。本人はこのIDとパスワードでログインできます。` +
+          (notified ? '（承認メールを送信しました）' : ''),
       )
     }
     await db
@@ -1160,7 +1216,14 @@ export default {
           priceYearly: env.STRIPE_PRICE_YEARLY,
           appUrl: env.APP_URL,
         }
-        return await handleApi(request, env.DB, env.ANTHROPIC_API_KEY, env.SEND_EMAIL, stripe)
+        return await handleApi(
+          request,
+          env.DB,
+          env.ANTHROPIC_API_KEY,
+          env.SEND_EMAIL,
+          stripe,
+          env.RESEND_API_KEY,
+        )
       } catch (e) {
         return json({ error: 'internal', message: String(e) }, 500)
       }
