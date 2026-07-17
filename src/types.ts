@@ -148,6 +148,10 @@ export interface Constraints {
   incompatibleHard?: boolean
   /** 定休日（毎週の休業曜日 0=日〜6=土）。この曜日は誰も割り当てない */
   closedWeekdays?: number[]
+  /** 特定日の休業（臨時休業）。"yyyy-MM-dd" の配列 */
+  closedDates?: string[]
+  /** 特定日の営業（臨時営業）。定休曜日でもこの日は営業扱いにする。"yyyy-MM-dd" の配列 */
+  openDates?: string[]
   /** 各シフトに必要な経験者(level>=1)の最低人数 */
   minExperiencedPerShift: number
   /** 連勤上限の既定値（労基法35条の週1休 → 原則6連勤まで） */
@@ -216,9 +220,21 @@ export interface AppData {
   busynessLevels: BusynessLevel[]
   /**
    * 日付 "yyyy-MM-dd" -> 忙しさ段階ID（個別指定。既定より優先）。
-   * 未指定の日は自動判定: 土日祝=最も忙しい段階 / 平日=中間の段階。
+   * 未指定の日は自動判定: 土日祝=既定の忙しさ / 平日=既定の忙しさ。
    */
   dayBusyness: Record<string, string>
+  /**
+   * 平日の既定の忙しさ段階ID（未設定日に適用）。
+   * 段階IDで固定するため、段階を追加・削除しても他の日の判定はずれない。
+   * 未設定時は段階の並び（中間）から自動決定する。
+   */
+  defaultWeekdayLevel?: string
+  /**
+   * 土日祝の既定の忙しさ段階ID（未設定日に適用）。
+   * 段階IDで固定するため、段階を追加・削除しても他の日の判定はずれない。
+   * 未設定時は段階の並び（末尾＝最も忙しい）から自動決定する。
+   */
+  defaultWeekendLevel?: string
   requirements: Requirement[]
   /** 特定日の必要人数の上書き */
   overrides: RequirementOverride[]
