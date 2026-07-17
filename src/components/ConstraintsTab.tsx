@@ -3,8 +3,6 @@ import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
 import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
 
-const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土']
-
 export default function ConstraintsTab() {
   const staff = useStore((s) => s.data.staff)
   const shifts = useStore((s) => s.data.shifts)
@@ -177,40 +175,6 @@ export default function ConstraintsTab() {
               </span>
             </label>
           </div>
-        </div>
-      </div>
-
-      {/* 定休日 */}
-      <div className="card space-y-3">
-        <div className="space-y-1">
-          <h3 className="section-title">定休日（毎週の休業日）</h3>
-          <p className="section-desc">
-            チェックした曜日はお店が休みとして、誰も割り当てません（人数不足の警告も出ません）。
-            特定日だけ営業したい場合は「必要人数」タブの「特定日の人数上書き」で個別に指定できます。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {WEEKDAY_LABELS.map((label, wd) => {
-            const on = (constraints.closedWeekdays ?? []).includes(wd)
-            return (
-              <button
-                key={wd}
-                onClick={() => {
-                  const cur = constraints.closedWeekdays ?? []
-                  updateConstraints({
-                    closedWeekdays: on ? cur.filter((d) => d !== wd) : [...cur, wd].sort(),
-                  })
-                }}
-                className={`min-h-[2.75rem] min-w-[3rem] rounded-xl border px-3 text-base font-semibold transition-colors ${
-                  on
-                    ? 'border-brand-500 bg-brand-500 text-white shadow-sm'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:bg-brand-50'
-                } ${wd === 0 ? 'text-red-500' : ''} ${on && wd === 0 ? '!text-white' : ''}`}
-              >
-                {label}
-              </button>
-            )
-          })}
         </div>
       </div>
 

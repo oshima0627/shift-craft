@@ -18,11 +18,15 @@ export default function BusynessCalendar() {
   const period = useStore((s) => s.data.period)
   const levels = useStore((s) => s.data.busynessLevels)
   const data = useStore((s) => s.data)
+  const constraints = useStore((s) => s.data.constraints)
   const updatePeriod = useStore((s) => s.updatePeriod)
   const setDayBusyness = useStore((s) => s.setDayBusyness)
   const addBusynessLevel = useStore((s) => s.addBusynessLevel)
   const updateBusynessLevel = useStore((s) => s.updateBusynessLevel)
   const removeBusynessLevel = useStore((s) => s.removeBusynessLevel)
+  const updateConstraints = useStore((s) => s.updateConstraints)
+
+  const closedWeekdays = new Set(constraints.closedWeekdays ?? [])
 
   const [year, month] = useMemo(() => {
     const [y, m] = period.start.split('-').map(Number)
@@ -103,6 +107,41 @@ export default function BusynessCalendar() {
         </div>
       </div>
 
+      {/* 定休日（毎週の休業曜日） */}
+      <div className="card space-y-3">
+        <div className="space-y-1">
+          <h3 className="section-title">定休日（毎週の休業日）</h3>
+          <p className="section-desc">
+            チェックした曜日はお店が休みとして、下のカレンダーで「定休日」と表示され、シフトも割り当てません。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {WEEKDAY_LABELS.map((label, wd) => {
+            const on = closedWeekdays.has(wd)
+            return (
+              <button
+                key={wd}
+                onClick={() => {
+                  const cur = constraints.closedWeekdays ?? []
+                  updateConstraints({
+                    closedWeekdays: on ? cur.filter((d) => d !== wd) : [...cur, wd].sort(),
+                  })
+                }}
+                className={`min-h-[2.75rem] min-w-[3rem] rounded-xl border px-3 text-base font-semibold transition-colors ${
+                  on
+                    ? 'border-slate-500 bg-slate-500 text-white shadow-sm'
+                    : `border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50 ${
+                        wd === 0 ? 'text-red-500' : wd === 6 ? 'text-blue-500' : 'text-slate-600'
+                      }`
+                }`}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       {/* 月カレンダー */}
       <div className="card space-y-3">
         <div className="flex items-center justify-between">
@@ -131,8 +170,27 @@ export default function BusynessCalendar() {
           {cells.map((date, i) => {
             if (!date) return <div key={i} />
             const day = Number(date.split('-')[2])
-            const level = levelById.get(busynessIdOf(data, date))
             const holiday = isJapaneseHoliday(date)
+            const closed = closedWeekdays.has(new Date(date + 'T00:00:00').getDay())
+            if (closed) {
+              // 定休日はグレーアウトして「定休日」と表示（クリック無効）
+              return (
+                <div
+                  key={date}
+                  className="flex h-20 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-base font-medium"
+                  title="定休日（毎週の休業日）"
+                >
+                  <span className="text-base font-semibold text-slate-400">
+                    {day}
+                    {holiday && <span className="ml-0.5 text-[11px] text-red-400">祝</span>}
+                  </span>
+                  <span className="mt-0.5 rounded bg-slate-400 px-1.5 text-[11px] font-semibold text-white">
+                    定休日
+                  </span>
+                </div>
+              )
+            }
+            const level = levelById.get(busynessIdOf(data, date))
             return (
               <button
                 key={date}
