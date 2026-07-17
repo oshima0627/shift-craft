@@ -66,11 +66,14 @@ export function formatSyncTime(iso: string): string {
 
 /** AI利用状況（ログイン時のみ） */
 export interface AiUsage {
-  plan: string
+  tier: string
   limit: number
   used: number
   remaining: number
 }
+
+/** アクセス層。active/trialing=フル、free=ロック */
+export type Tier = 'active' | 'trialing' | 'free'
 
 export type AuthStatus =
   | {
@@ -78,6 +81,14 @@ export type AuthStatus =
       configured: boolean
       authenticated: boolean
       username?: string
+      /** アクセス層。未ログイン時は undefined */
+      tier?: Tier
+      /** フルアクセス可否（AI・書き出し等） */
+      entitled?: boolean
+      /** トライアル終了時刻（ISO） */
+      trialEndsAt?: string | null
+      /** Stripeが有効化されているか（契約ボタンを出すか） */
+      billingConfigured?: boolean
       aiUsage?: AiUsage
     }
   | { backend: false }
@@ -92,7 +103,11 @@ export async function getAuthStatus(): Promise<AuthStatus> {
       configured?: boolean
       authenticated?: boolean
       username?: string
-      aiPlan?: string
+      tier?: Tier
+      entitled?: boolean
+      trialEndsAt?: string | null
+      billingConfigured?: boolean
+      aiTier?: string
       aiLimit?: number
       aiUsed?: number
       aiRemaining?: number
@@ -101,7 +116,7 @@ export async function getAuthStatus(): Promise<AuthStatus> {
     const aiUsage =
       typeof body.aiLimit === 'number'
         ? {
-            plan: body.aiPlan ?? 'trial',
+            tier: body.aiTier ?? 'trialing',
             limit: body.aiLimit,
             used: body.aiUsed ?? 0,
             remaining: body.aiRemaining ?? 0,
@@ -112,6 +127,10 @@ export async function getAuthStatus(): Promise<AuthStatus> {
       configured: body.configured,
       authenticated: !!body.authenticated,
       username: body.username,
+      tier: body.tier,
+      entitled: body.entitled,
+      trialEndsAt: body.trialEndsAt ?? null,
+      billingConfigured: body.billingConfigured,
       aiUsage,
     }
   } catch {
@@ -129,6 +148,44 @@ async function postJson(path: string, body: unknown): Promise<{ ok: boolean; err
     if (res.ok) return { ok: true }
     const b = (await res.json().catch(() => ({}))) as { error?: string }
     return { ok: false, error: b.error }
+  } catch {
+    return { ok: false, error: 'network' }
+  }
+}
+
+// ===== 課金（Stripe） =====
+
+export type BillingResult = { ok: true } | { ok: false; error: string }
+
+/** Stripe Checkout を開始（月額/年額）。成功時は決済ページへ遷移する */
+export async function startCheckout(plan: 'monthly' | 'yearly'): Promise<BillingResult> {
+  try {
+    const res = await fetch('/api/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ plan }),
+    })
+    const b = (await res.json().catch(() => ({}))) as { url?: string; error?: string }
+    if (res.ok && b.url) {
+      window.location.href = b.url
+      return { ok: true }
+    }
+    return { ok: false, error: b.error ?? 'failed' }
+  } catch {
+    return { ok: false, error: 'network' }
+  }
+}
+
+/** Stripe 顧客ポータル（支払い管理・解約）を開く */
+export async function openBillingPortal(): Promise<BillingResult> {
+  try {
+    const res = await fetch('/api/billing/portal', { method: 'POST' })
+    const b = (await res.json().catch(() => ({}))) as { url?: string; error?: string }
+    if (res.ok && b.url) {
+      window.location.href = b.url
+      return { ok: true }
+    }
+    return { ok: false, error: b.error ?? 'failed' }
   } catch {
     return { ok: false, error: 'network' }
   }

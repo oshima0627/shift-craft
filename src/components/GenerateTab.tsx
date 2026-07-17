@@ -7,12 +7,16 @@ import { enumerateDates } from '../utils/date'
 import { shiftsOverlap } from '../utils/time'
 import { exportCsv } from '../utils/csv'
 import ScheduleGrid from './ScheduleGrid'
+import { useEntitlement } from '../utils/useEntitlement'
+import BillingModal from './BillingModal'
 
 export default function GenerateTab() {
   const data = useStore((s) => s.data)
   const updatePeriod = useStore((s) => s.updatePeriod)
   const [result, setResult] = useState<ScheduleResult | null>(null)
   const [generating, setGenerating] = useState(false)
+  const ent = useEntitlement()
+  const [billingOpen, setBillingOpen] = useState(false)
 
   const dates = useMemo(() => enumerateDates(data.period), [data.period])
 
@@ -47,17 +51,26 @@ export default function GenerateTab() {
     <div className="space-y-4">
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <h2 className="page-title">シフト生成</h2>
-        <div className="flex flex-wrap gap-2">
-          {result && (
-            <>
-              <button className="btn-ghost" onClick={() => window.print()}>
-                印刷
+        <div className="flex flex-wrap items-center gap-2">
+          {result &&
+            (ent.locked ? (
+              <button
+                className="btn-ghost"
+                onClick={() => setBillingOpen(true)}
+                title="書き出しは有料プランでご利用いただけます"
+              >
+                🔒 印刷・CSV出力（有料）
               </button>
-              <button className="btn-ghost" onClick={() => exportCsv(data, result)}>
-                CSV出力
-              </button>
-            </>
-          )}
+            ) : (
+              <>
+                <button className="btn-ghost" onClick={() => window.print()}>
+                  印刷
+                </button>
+                <button className="btn-ghost" onClick={() => exportCsv(data, result)}>
+                  CSV出力
+                </button>
+              </>
+            ))}
           <button
             className="btn-primary px-6 text-lg"
             onClick={handleGenerate}
@@ -67,6 +80,11 @@ export default function GenerateTab() {
           </button>
         </div>
       </div>
+      <BillingModal
+        open={billingOpen}
+        onClose={() => setBillingOpen(false)}
+        billingConfigured={ent.billingConfigured}
+      />
 
       <div className="no-print card flex flex-wrap items-end gap-3">
         <div>

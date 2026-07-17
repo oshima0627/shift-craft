@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { handleApi, evaluateAiUse, AI_LIMITS, type D1Database, type D1PreparedStatement } from './index'
+import {
+  handleApi,
+  evaluateAiUse,
+  AI_LIMITS,
+  computeEntitlement,
+  verifyStripeSignature,
+  type D1Database,
+  type D1PreparedStatement,
+} from './index'
 
 /**
  * D1 のインメモリ・フェイク。worker/index.ts が発行する固定SQLパターンのみ解釈する。
@@ -324,20 +332,16 @@ describe('worker /api/settings（要ログイン）', () => {
 describe('AI利用回数の上限（evaluateAiUse）', () => {
   const MONTH = '2026-07'
 
-  it('trial は累計5回まで（リセットなし）', () => {
-    expect(AI_LIMITS.trial).toBe(5)
-    // 未使用
-    let u = evaluateAiUse('trial', 0, 'trial', MONTH)
+  it('trialing は累計5回まで（リセットなし）', () => {
+    expect(AI_LIMITS.trialing).toBe(5)
+    let u = evaluateAiUse('trialing', 0, 'trialing', MONTH)
     expect(u.limit).toBe(5)
     expect(u.allowed).toBe(true)
     expect(u.remaining).toBe(5)
-    expect(u.period).toBe('trial')
-    // 4回使用済み → あと1回可
-    u = evaluateAiUse('trial', 4, 'trial', MONTH)
-    expect(u.allowed).toBe(true)
+    expect(u.period).toBe('trialing')
+    u = evaluateAiUse('trialing', 4, 'trialing', MONTH)
     expect(u.remaining).toBe(1)
-    // 5回使用済み → 上限到達
-    u = evaluateAiUse('trial', 5, 'trial', MONTH)
+    u = evaluateAiUse('trialing', 5, 'trialing', MONTH)
     expect(u.allowed).toBe(false)
     expect(u.remaining).toBe(0)
   })
@@ -348,12 +352,18 @@ describe('AI利用回数の上限（evaluateAiUse）', () => {
     expect(u.limit).toBe(30)
     expect(u.allowed).toBe(true)
     expect(u.remaining).toBe(1)
-    const full = evaluateAiUse('active', 30, MONTH, MONTH)
-    expect(full.allowed).toBe(false)
+    expect(evaluateAiUse('active', 30, MONTH, MONTH).allowed).toBe(false)
+  })
+
+  it('free は0回（利用不可）', () => {
+    expect(AI_LIMITS.free).toBe(0)
+    const u = evaluateAiUse('free', 0, 'free', MONTH)
+    expect(u.limit).toBe(0)
+    expect(u.allowed).toBe(false)
+    expect(u.remaining).toBe(0)
   })
 
   it('active は月が変わるとカウントが0にリセットされる', () => {
-    // 先月30回使い切っていても、今月分は0からで使える
     const u = evaluateAiUse('active', 30, '2026-06', '2026-07')
     expect(u.used).toBe(0)
     expect(u.allowed).toBe(true)
@@ -361,18 +371,94 @@ describe('AI利用回数の上限（evaluateAiUse）', () => {
     expect(u.period).toBe('2026-07')
   })
 
-  it('trial はプランを active にすると上限が30/月に上がる', () => {
-    // 同じ「5回使用済み」でも、trial なら打ち止め、active なら継続可
-    expect(evaluateAiUse('trial', 5, 'trial', MONTH).allowed).toBe(false)
-    // active に移行後は period が月キーに変わるため used は0扱い（新プランの初月）
-    const upgraded = evaluateAiUse('active', 5, 'trial', MONTH)
+  it('trialing→active で上限が30/月に上がる', () => {
+    expect(evaluateAiUse('trialing', 5, 'trialing', MONTH).allowed).toBe(false)
+    const upgraded = evaluateAiUse('active', 5, 'trialing', MONTH)
     expect(upgraded.used).toBe(0)
     expect(upgraded.allowed).toBe(true)
   })
 
-  it('未知のプランは trial 扱い（安全側）', () => {
+  it('未知の層は trialing 扱い（安全側）', () => {
     const u = evaluateAiUse(undefined, 0, '', MONTH)
-    expect(u.plan).toBe('trial')
+    expect(u.tier).toBe('trialing')
     expect(u.limit).toBe(5)
+  })
+})
+
+describe('アクセス権限（computeEntitlement）', () => {
+  const NOW = Date.parse('2026-07-17T00:00:00Z')
+  const future = new Date(NOW + 3 * 86400000).toISOString()
+  const past = new Date(NOW - 3 * 86400000).toISOString()
+
+  it('購読 active はフルアクセス', () => {
+    const e = computeEntitlement('active', null, NOW)
+    expect(e.tier).toBe('active')
+    expect(e.entitled).toBe(true)
+  })
+
+  it('comp（無料招待）はフルアクセス', () => {
+    expect(computeEntitlement('comp', null, NOW).entitled).toBe(true)
+  })
+
+  it('トライアル期間内は trialing でフルアクセス', () => {
+    const e = computeEntitlement(null, future, NOW)
+    expect(e.tier).toBe('trialing')
+    expect(e.entitled).toBe(true)
+  })
+
+  it('トライアル切れ・未購読は free（ロック）', () => {
+    const e = computeEntitlement(null, past, NOW)
+    expect(e.tier).toBe('free')
+    expect(e.entitled).toBe(false)
+  })
+
+  it('解約後（canceled）はトライアルも切れていれば free', () => {
+    expect(computeEntitlement('canceled', past, NOW).tier).toBe('free')
+    // ただしトライアル期間内なら trialing 扱い
+    expect(computeEntitlement('canceled', future, NOW).tier).toBe('trialing')
+  })
+
+  it('past_due はフルアクセスに含めない（トライアルも無ければ free）', () => {
+    expect(computeEntitlement('past_due', null, NOW).tier).toBe('free')
+  })
+})
+
+describe('Stripe Webhook 署名検証（verifyStripeSignature）', () => {
+  const secret = 'whsec_test_secret'
+  const body = '{"type":"customer.subscription.updated"}'
+
+  async function hmacHex(msg: string): Promise<string> {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    )
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(msg))
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  it('正しい署名は通る', async () => {
+    const nowMs = Date.parse('2026-07-17T00:00:00Z')
+    const t = Math.floor(nowMs / 1000)
+    const v1 = await hmacHex(`${t}.${body}`)
+    const ok = await verifyStripeSignature(body, `t=${t},v1=${v1}`, secret, nowMs)
+    expect(ok).toBe(true)
+  })
+
+  it('署名が違えば拒否', async () => {
+    const nowMs = Date.parse('2026-07-17T00:00:00Z')
+    const t = Math.floor(nowMs / 1000)
+    const ok = await verifyStripeSignature(body, `t=${t},v1=deadbeef`, secret, nowMs)
+    expect(ok).toBe(false)
+  })
+
+  it('古いタイムスタンプ（許容超え）は拒否', async () => {
+    const nowMs = Date.parse('2026-07-17T00:00:00Z')
+    const t = Math.floor(nowMs / 1000) - 10 * 60 // 10分前
+    const v1 = await hmacHex(`${t}.${body}`)
+    const ok = await verifyStripeSignature(body, `t=${t},v1=${v1}`, secret, nowMs)
+    expect(ok).toBe(false)
   })
 })

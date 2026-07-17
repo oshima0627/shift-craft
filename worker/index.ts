@@ -44,6 +44,25 @@ export interface Env {
   ANTHROPIC_API_KEY?: string
   /** 承認メール送信用（wrangler.jsonc の send_email バインディング） */
   SEND_EMAIL?: SendEmailBinding
+  /** Stripe 秘密鍵（`wrangler secret put STRIPE_SECRET_KEY`）。未設定で課金機能は無効 */
+  STRIPE_SECRET_KEY?: string
+  /** Stripe Webhook 署名シークレット（`whsec_...`） */
+  STRIPE_WEBHOOK_SECRET?: string
+  /** 月額プランの Price ID（`price_...`） */
+  STRIPE_PRICE_MONTHLY?: string
+  /** 年額プランの Price ID（`price_...`） */
+  STRIPE_PRICE_YEARLY?: string
+  /** 決済後の戻り先ベースURL（未設定はリクエストのoriginを使用） */
+  APP_URL?: string
+}
+
+/** Stripe 関連の設定（env から集約） */
+export interface StripeConfig {
+  secretKey?: string
+  webhookSecret?: string
+  priceMonthly?: string
+  priceYearly?: string
+  appUrl?: string
 }
 
 /** 新規登録の承認メールの宛先（管理者） */
@@ -69,7 +88,16 @@ interface UserRow {
   /** 'active'=ログイン可 / 'pending'=承認待ち */
   status?: string
   email?: string | null
+  /** Stripe購読状態: 'active'/'trialing'/'past_due'/'canceled'/'comp'（無料招待）等。null=未購読 */
+  subscription_status?: string | null
+  /** アプリ内無料トライアルの終了時刻（ISO）。この期間はフルアクセス */
+  trial_ends_at?: string | null
+  stripe_customer_id?: string | null
+  stripe_subscription_id?: string | null
 }
+
+/** 無料トライアル日数 */
+const TRIAL_DAYS = 14
 
 // ---------- 共通ユーティリティ ----------
 
@@ -316,6 +344,22 @@ async function ensureSchema(db: D1Database): Promise<void> {
     .run()
     .catch(() => {})
   await db.prepare(`ALTER TABLE users ADD COLUMN ai_period TEXT NOT NULL DEFAULT ''`).run().catch(() => {})
+  // 課金（サブスク）関連のカラム
+  let subColumnAdded = false
+  await db
+    .prepare(`ALTER TABLE users ADD COLUMN subscription_status TEXT`)
+    .run()
+    .then(() => {
+      subColumnAdded = true
+    })
+    .catch(() => {})
+  if (subColumnAdded) {
+    // この変更以前から居るユーザーは既存利用者としてフルアクセス（comp=無料招待扱い）
+    await db.prepare(`UPDATE users SET subscription_status = 'comp'`).run().catch(() => {})
+  }
+  await db.prepare(`ALTER TABLE users ADD COLUMN trial_ends_at TEXT`).run().catch(() => {})
+  await db.prepare(`ALTER TABLE users ADD COLUMN stripe_customer_id TEXT`).run().catch(() => {})
+  await db.prepare(`ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT`).run().catch(() => {})
   // セッション署名用の共有シークレット（単一行）
   await db
     .prepare(
@@ -351,7 +395,9 @@ async function countUsers(db: D1Database): Promise<number> {
 
 async function getUser(db: D1Database, username: string): Promise<UserRow | null> {
   return db
-    .prepare('SELECT username, password_hash, status, email FROM users WHERE username = ?1')
+    .prepare(
+      'SELECT username, password_hash, status, email, subscription_status, trial_ends_at, stripe_customer_id, stripe_subscription_id FROM users WHERE username = ?1',
+    )
     .bind(username)
     .first<UserRow>()
 }
@@ -383,11 +429,40 @@ function normalizeModel(v: unknown): AiModel {
   return AI_MODELS.includes(v as AiModel) ? (v as AiModel) : DEFAULT_AI_MODEL
 }
 
-// ---------- AI 利用回数の上限（プラン別） ----------
+// ---------- アクセス権限（サブスク／トライアル） ----------
 
-/** プラン別のAI利用上限。trial=お試し（累計）/ active=月額課金中（毎月リセット） */
-export const AI_LIMITS = { trial: 5, active: 30 } as const
-export type AiPlan = keyof typeof AI_LIMITS
+/** アクセス層。active/trialing=フルアクセス、free=ロック（AI・書き出し等） */
+export type Tier = 'active' | 'trialing' | 'free'
+
+/**
+ * users行からアクセス権限を判定する（純粋関数・テスト可能）。
+ * - Stripe購読が active/trialing、または comp（無料招待）→ active（フル）
+ * - アプリ内トライアル期間内 → trialing（フル）
+ * - それ以外 → free（ロック）
+ */
+export function computeEntitlement(
+  subscriptionStatus: string | null | undefined,
+  trialEndsAt: string | null | undefined,
+  nowMs: number,
+): { tier: Tier; entitled: boolean; trialEndsAt: string | null } {
+  const s = subscriptionStatus ?? ''
+  if (s === 'active' || s === 'trialing' || s === 'comp') {
+    return { tier: 'active', entitled: true, trialEndsAt: trialEndsAt ?? null }
+  }
+  if (trialEndsAt) {
+    const end = Date.parse(trialEndsAt)
+    if (!Number.isNaN(end) && nowMs < end) {
+      return { tier: 'trialing', entitled: true, trialEndsAt }
+    }
+  }
+  return { tier: 'free', entitled: false, trialEndsAt: trialEndsAt ?? null }
+}
+
+// ---------- AI 利用回数の上限（アクセス層別） ----------
+
+/** アクセス層別のAI利用上限。trialing=お試し（累計）/ active=月額課金中（毎月）/ free=不可 */
+export const AI_LIMITS = { trialing: 5, active: 30, free: 0 } as const
+export type AiTier = keyof typeof AI_LIMITS
 
 /** 'YYYY-MM' を返す */
 function monthKey(now: Date = new Date()): string {
@@ -395,30 +470,148 @@ function monthKey(now: Date = new Date()): string {
 }
 
 /**
- * 現在の利用状況から、いま1回AIを使えるか判定する（純粋関数・テスト可能）。
- * trial は累計5回まで（リセットなし）、active は毎月30回まで（月替わりで0に戻る）。
+ * アクセス層と使用状況から、いま1回AIを使えるか判定する（純粋関数・テスト可能）。
+ * active は毎月30回（月替わりでリセット）、trialing は累計5回、free は0（不可）。
  */
 export function evaluateAiUse(
-  plan: string | null | undefined,
+  tier: string | null | undefined,
   aiUsed: number,
   aiPeriod: string | null | undefined,
   nowMonth: string,
-): { plan: AiPlan; limit: number; period: string; used: number; allowed: boolean; remaining: number } {
-  const p: AiPlan = plan === 'active' ? 'active' : 'trial'
-  const limit = AI_LIMITS[p]
-  const period = p === 'active' ? nowMonth : 'trial'
+): { tier: AiTier; limit: number; period: string; used: number; allowed: boolean; remaining: number } {
+  const t: AiTier = tier === 'active' ? 'active' : tier === 'free' ? 'free' : 'trialing'
+  const limit = AI_LIMITS[t]
+  const period = t === 'active' ? nowMonth : t
   // 期間が変わっていたらカウントは0からやり直し（月額の月替わりリセット）
   const used = aiPeriod === period ? Math.max(0, Math.floor(Number(aiUsed)) || 0) : 0
-  return { plan: p, limit, period, used, allowed: used < limit, remaining: Math.max(0, limit - used) }
+  return { tier: t, limit, period, used, allowed: used < limit, remaining: Math.max(0, limit - used) }
 }
 
-/** DBから利用状況を読み、判定結果を返す */
+/** DBから権限＋AI利用状況を読み、判定結果を返す */
 async function readAiUsage(db: D1Database, username: string) {
   const row = await db
-    .prepare('SELECT plan, ai_used, ai_period FROM users WHERE username = ?1')
+    .prepare(
+      'SELECT subscription_status, trial_ends_at, ai_used, ai_period FROM users WHERE username = ?1',
+    )
     .bind(username)
-    .first<{ plan?: string; ai_used?: number; ai_period?: string }>()
-  return evaluateAiUse(row?.plan, Number(row?.ai_used ?? 0), row?.ai_period, monthKey())
+    .first<{
+      subscription_status?: string
+      trial_ends_at?: string
+      ai_used?: number
+      ai_period?: string
+    }>()
+  const ent = computeEntitlement(row?.subscription_status, row?.trial_ends_at, Date.now())
+  return evaluateAiUse(ent.tier, Number(row?.ai_used ?? 0), row?.ai_period, monthKey())
+}
+
+// ---------- Stripe（fetch + Web Crypto） ----------
+
+/** HMAC-SHA256 を16進文字列で返す（Stripe署名検証用） */
+async function hmacHex(secret: string, msg: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg))
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Stripe Webhook 署名を検証する（純粋・テスト可能）。
+ * Stripe-Signature ヘッダ `t=...,v1=...` と本文から署名を再計算して比較する。
+ */
+export async function verifyStripeSignature(
+  rawBody: string,
+  sigHeader: string,
+  secret: string,
+  nowMs: number,
+  toleranceSec = 300,
+): Promise<boolean> {
+  const parts: Record<string, string> = {}
+  for (const kv of sigHeader.split(',')) {
+    const i = kv.indexOf('=')
+    if (i > 0) parts[kv.slice(0, i).trim()] = kv.slice(i + 1).trim()
+  }
+  const t = Number(parts.t)
+  const v1 = parts.v1
+  if (!t || !v1) return false
+  if (Math.abs(nowMs / 1000 - t) > toleranceSec) return false
+  const expected = await hmacHex(secret, `${t}.${rawBody}`)
+  return timingSafeEqual(expected, v1)
+}
+
+/** Stripe REST を form-encoded で呼ぶ */
+async function stripeCall(
+  secretKey: string,
+  path: string,
+  params: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${secretKey}`,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams(params).toString(),
+  })
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) {
+    const err = (data.error ?? {}) as { message?: string }
+    throw new Error(err.message || `stripe_error_${res.status}`)
+  }
+  return data
+}
+
+/** Webhook イベントを処理して users のサブスク状態を更新する */
+async function handleStripeEvent(db: D1Database, event: Record<string, unknown>): Promise<void> {
+  const type = String(event.type ?? '')
+  const obj = ((event.data as Record<string, unknown>)?.object ?? {}) as Record<string, unknown>
+  if (type === 'checkout.session.completed') {
+    const username = String(obj.client_reference_id ?? '')
+    const customer = obj.customer ? String(obj.customer) : null
+    const subscription = obj.subscription ? String(obj.subscription) : null
+    if (username) {
+      await db
+        .prepare(
+          "UPDATE users SET subscription_status = 'active', stripe_customer_id = COALESCE(?1, stripe_customer_id), stripe_subscription_id = ?2 WHERE username = ?3",
+        )
+        .bind(customer, subscription, username)
+        .run()
+        .catch(() => {})
+    }
+    return
+  }
+  if (type === 'customer.subscription.updated' || type === 'customer.subscription.created') {
+    const customer = obj.customer ? String(obj.customer) : ''
+    const status = String(obj.status ?? '')
+    const subId = obj.id ? String(obj.id) : null
+    if (customer) {
+      await db
+        .prepare(
+          'UPDATE users SET subscription_status = ?1, stripe_subscription_id = ?2 WHERE stripe_customer_id = ?3',
+        )
+        .bind(status, subId, customer)
+        .run()
+        .catch(() => {})
+    }
+    return
+  }
+  if (type === 'customer.subscription.deleted') {
+    const customer = obj.customer ? String(obj.customer) : ''
+    if (customer) {
+      await db
+        .prepare(
+          "UPDATE users SET subscription_status = 'canceled', stripe_subscription_id = NULL WHERE stripe_customer_id = ?1",
+        )
+        .bind(customer)
+        .run()
+        .catch(() => {})
+    }
+    return
+  }
 }
 
 /** ParsedRule（src/types.ts）に対応する構造化出力スキーマ */
@@ -592,6 +785,7 @@ export async function handleApi(
   db: D1Database,
   apiKey?: string,
   sendEmail?: SendEmailBinding,
+  stripe?: StripeConfig,
 ): Promise<Response> {
   await ensureSchema(db)
   const url = new URL(request.url)
@@ -602,16 +796,39 @@ export async function handleApi(
     const configured = (await countUsers(db)) > 0
     const user = await authedUser(request, db)
     if (!user) return json({ configured, authenticated: false })
+    const row = await getUser(db, user)
+    const ent = computeEntitlement(row?.subscription_status, row?.trial_ends_at, Date.now())
     const u = await readAiUsage(db, user)
     return json({
       configured,
       authenticated: true,
       username: user,
-      aiPlan: u.plan,
+      tier: ent.tier,
+      entitled: ent.entitled,
+      trialEndsAt: ent.trialEndsAt,
+      billingConfigured: !!(stripe?.secretKey && stripe?.priceMonthly),
+      aiTier: u.tier,
       aiLimit: u.limit,
       aiUsed: u.used,
       aiRemaining: u.remaining,
     })
+  }
+
+  // ---- Stripe Webhook（公開・署名で認可） ----
+  if (path === '/api/stripe/webhook' && request.method === 'POST') {
+    if (!stripe?.webhookSecret) return json({ error: 'not_configured' }, 501)
+    const sig = request.headers.get('stripe-signature') ?? ''
+    const raw = await request.text()
+    const ok = await verifyStripeSignature(raw, sig, stripe.webhookSecret, Date.now())
+    if (!ok) return json({ error: 'bad_signature' }, 400)
+    let event: Record<string, unknown>
+    try {
+      event = JSON.parse(raw)
+    } catch {
+      return json({ error: 'invalid_json' }, 400)
+    }
+    await handleStripeEvent(db, event)
+    return json({ received: true })
   }
 
   if (path === '/api/auth/setup' && request.method === 'POST') {
@@ -623,12 +840,12 @@ export async function handleApi(
     if (username.length < 1) return json({ error: 'invalid_username' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     const secret = await ensureSessionSecret(db)
-    // 最初のアカウント（運営者）は課金対象外の active 扱い
+    // 最初のアカウント（運営者）は課金対象外（comp=無料招待）でフルアクセス
     await db
       .prepare(
-        'INSERT INTO users (username, password_hash, created_at, status, email, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+        'INSERT INTO users (username, password_hash, created_at, status, email, plan, subscription_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
       )
-      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null, 'active')
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null, 'active', 'comp')
       .run()
     const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
@@ -666,12 +883,22 @@ export async function handleApi(
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
 
     const secret = await ensureSessionSecret(db)
-    // 一般ユーザーの新規登録は trial（お試し。AI累計5回まで）で開始
+    // 一般ユーザーの新規登録は 14日間の無料トライアルで開始（承認後に有効）
+    const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
     await db
       .prepare(
-        'INSERT INTO users (username, password_hash, created_at, status, email, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+        'INSERT INTO users (username, password_hash, created_at, status, email, plan, subscription_status, trial_ends_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)',
       )
-      .bind(username, await hashPassword(password), new Date().toISOString(), 'pending', email || null, 'trial')
+      .bind(
+        username,
+        await hashPassword(password),
+        new Date().toISOString(),
+        'pending',
+        email || null,
+        'trial',
+        null,
+        trialEndsAt,
+      )
       .run()
 
     // 承認メールを送信（失敗しても申請自体は成立させる。emailed で状況を返す）
@@ -727,14 +954,68 @@ export async function handleApi(
     if (username.length < 1) return json({ error: 'invalid_username' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
-    // 管理者による追加は即時有効（承認不要）・active 扱い
+    // 管理者による追加は即時有効（承認不要）・comp（無料招待）でフルアクセス
     await db
       .prepare(
-        'INSERT INTO users (username, password_hash, created_at, status, email, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
+        'INSERT INTO users (username, password_hash, created_at, status, email, plan, subscription_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
       )
-      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null, 'active')
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null, 'active', 'comp')
       .run()
     return json({ ok: true })
+  }
+
+  // ---- 課金（Stripe Checkout / 顧客ポータル） ----
+  if (path === '/api/billing/checkout' && request.method === 'POST') {
+    if (!stripe?.secretKey || !stripe.priceMonthly) return json({ error: 'not_configured' }, 501)
+    const body = await readJson<{ plan?: 'monthly' | 'yearly' }>(request)
+    const price = body?.plan === 'yearly' ? stripe.priceYearly : stripe.priceMonthly
+    if (!price) return json({ error: 'not_configured' }, 501)
+    try {
+      const dbUser = await getUser(db, currentUser)
+      let customerId = dbUser?.stripe_customer_id ?? null
+      if (!customerId) {
+        const cust = await stripeCall(stripe.secretKey, 'customers', {
+          'metadata[username]': currentUser,
+          ...(dbUser?.email ? { email: dbUser.email } : {}),
+        })
+        customerId = String(cust.id)
+        await db
+          .prepare('UPDATE users SET stripe_customer_id = ?1 WHERE username = ?2')
+          .bind(customerId, currentUser)
+          .run()
+      }
+      const base = stripe.appUrl || url.origin
+      const session = await stripeCall(stripe.secretKey, 'checkout/sessions', {
+        mode: 'subscription',
+        customer: customerId,
+        'line_items[0][price]': price,
+        'line_items[0][quantity]': '1',
+        client_reference_id: currentUser,
+        'subscription_data[metadata][username]': currentUser,
+        allow_promotion_codes: 'true',
+        success_url: `${base}/?checkout=success`,
+        cancel_url: `${base}/?checkout=cancel`,
+      })
+      return json({ url: String(session.url) })
+    } catch (e) {
+      return json({ error: 'stripe_failed', message: String(e) }, 502)
+    }
+  }
+
+  if (path === '/api/billing/portal' && request.method === 'POST') {
+    if (!stripe?.secretKey) return json({ error: 'not_configured' }, 501)
+    const dbUser = await getUser(db, currentUser)
+    if (!dbUser?.stripe_customer_id) return json({ error: 'no_customer' }, 400)
+    try {
+      const base = stripe.appUrl || url.origin
+      const session = await stripeCall(stripe.secretKey, 'billing_portal/sessions', {
+        customer: dbUser.stripe_customer_id,
+        return_url: base,
+      })
+      return json({ url: String(session.url) })
+    } catch (e) {
+      return json({ error: 'stripe_failed', message: String(e) }, 502)
+    }
   }
 
   // ---- AI（Claude）による自由文条件の解釈 ----
@@ -744,7 +1025,7 @@ export async function handleApi(
     const usage = await readAiUsage(db, currentUser)
     if (!usage.allowed) {
       return json(
-        { error: 'ai_limit', plan: usage.plan, limit: usage.limit, used: usage.used, remaining: 0 },
+        { error: 'ai_limit', tier: usage.tier, limit: usage.limit, used: usage.used, remaining: 0 },
         429,
       )
     }
@@ -781,7 +1062,7 @@ export async function handleApi(
         .run()
       return json({
         ...result,
-        aiPlan: usage.plan,
+        aiTier: usage.tier,
         aiLimit: usage.limit,
         aiRemaining: Math.max(0, usage.limit - newUsed),
       })
@@ -872,7 +1153,14 @@ export default {
     const url = new URL(request.url)
     if (url.pathname.startsWith('/api/')) {
       try {
-        return await handleApi(request, env.DB, env.ANTHROPIC_API_KEY, env.SEND_EMAIL)
+        const stripe: StripeConfig = {
+          secretKey: env.STRIPE_SECRET_KEY,
+          webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+          priceMonthly: env.STRIPE_PRICE_MONTHLY,
+          priceYearly: env.STRIPE_PRICE_YEARLY,
+          appUrl: env.APP_URL,
+        }
+        return await handleApi(request, env.DB, env.ANTHROPIC_API_KEY, env.SEND_EMAIL, stripe)
       } catch (e) {
         return json({ error: 'internal', message: String(e) }, 500)
       }
