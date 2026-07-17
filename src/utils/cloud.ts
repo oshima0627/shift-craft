@@ -121,6 +121,11 @@ export function registerAccount(username: string, password: string) {
   return postJson('/api/auth/register', { username, password })
 }
 
+/** 新規登録の申請（公開）。管理者の承認後にログインできるようになる */
+export function requestAccess(username: string, password: string, email: string) {
+  return postJson('/api/auth/request-access', { username, password, email })
+}
+
 /** ログアウト */
 export async function logout(): Promise<void> {
   try {

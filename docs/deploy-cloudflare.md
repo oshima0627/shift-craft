@@ -169,6 +169,32 @@ npx -y wrangler secret put ANTHROPIC_API_KEY
 > APIキーの取得: [Anthropic Console](https://console.anthropic.com/) → API Keys。
 > 課金はAPI利用分のみ。解釈1回あたりごく少量のトークンしか使いません。
 
+## 8. 新規登録の承認メールを有効にする（Email Routing）
+
+ログイン画面の「新規登録」から一般ユーザーが申請 → 管理者(`oshima6.27@gmail.com`)に
+確認メールが届き、**承認リンクを押すとログインできるようになる**フローです。メール送信は
+Cloudflare の Email Routing を使います（独自ドメインが必要。無料）。
+
+1. Cloudflare ダッシュボード → 対象ドメイン（例 `nexeed-lab.com`）→ **Email → Email Routing** を有効化
+2. **Destination addresses** に `oshima6.27@gmail.com` を追加 → 届いた確認メールの
+   ボタンを押して **Verify**（検証必須。未検証だとメールが届きません）
+3. `wrangler.jsonc` の `send_email` バインディング（設定済み）で、送信元
+   `noreply@nexeed-lab.com`／宛先 `oshima6.27@gmail.com` にメールを送ります。
+   別ドメインで運用する場合は `worker/index.ts` の `MAIL_FROM` と、`wrangler.jsonc` の
+   `destination_address` を合わせて変更してください。
+4. 反映のため再デプロイ：`npm run deploy`（バインディング追加はデプロイが必要）
+
+> ⚠️ **Cloudflare Access（手順5/A-5）を使っている場合の注意**
+> Access でドメイン全体を保護していると、`/register`（登録ページ）や `/api/auth/*`
+> （申請・承認リンク）に**部外者が到達できず、新規登録が機能しません**。
+> このアプリは独自のID＋パスワード＋承認で保護できるため、**セルフ登録を使うなら
+> この Worker では Cloudflare Access を外す**（アプリ内ログイン＋承認で運用）ことを推奨します。
+> Access を残す場合は、`/register` と `/api/auth/*` にバイパス（Service Auth / Public）を設定してください。
+
+> 補足: メール送信バインディング未設定・未検証でも**申請自体は成立**します（アカウントは
+> 「承認待ち」で作成）。その場合はメールが届かないので、検証を済ませてから再申請するか、
+> 検証後に届いたメールのリンクで承認してください。
+
 ## 運用メモ
 
 - **同期は明示操作のみ**: 通常の編集はこれまで通り端末内（localStorage）に自動保存され、
