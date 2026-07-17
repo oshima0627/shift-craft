@@ -281,11 +281,15 @@ async function ensureSchema(db: D1Database): Promise<void> {
     .run()
   // ユーザー（ID＋パスワード）。複数アカウント可。
   // status: 'active'=ログイン可 / 'pending'=承認待ち。email: 申請者の連絡先（任意）。
+  // plan: 'trial'=お試し（AI累計5回）/ 'active'=月額課金中（AI毎月30回）。
+  // ai_used/ai_period: AI利用回数の集計（period は 'trial' か 'YYYY-MM'）。
   await db
     .prepare(
       `CREATE TABLE IF NOT EXISTS users (
          username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, created_at TEXT NOT NULL,
-         status TEXT NOT NULL DEFAULT 'active', email TEXT)`,
+         status TEXT NOT NULL DEFAULT 'active', email TEXT,
+         plan TEXT NOT NULL DEFAULT 'trial', ai_used INTEGER NOT NULL DEFAULT 0,
+         ai_period TEXT NOT NULL DEFAULT '')`,
     )
     .run()
   // 既存DB（旧スキーマ）へのカラム追加。既にあれば無視する。
@@ -294,6 +298,24 @@ async function ensureSchema(db: D1Database): Promise<void> {
     .run()
     .catch(() => {})
   await db.prepare(`ALTER TABLE users ADD COLUMN email TEXT`).run().catch(() => {})
+  // 課金プラン・AI利用回数のカラム（旧DBへの追加）。
+  let planColumnAdded = false
+  await db
+    .prepare(`ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'trial'`)
+    .run()
+    .then(() => {
+      planColumnAdded = true
+    })
+    .catch(() => {})
+  if (planColumnAdded) {
+    // この変更以前から居るユーザーは既存利用者として active 扱い（お試し制限で困らせない）
+    await db.prepare(`UPDATE users SET plan = 'active'`).run().catch(() => {})
+  }
+  await db
+    .prepare(`ALTER TABLE users ADD COLUMN ai_used INTEGER NOT NULL DEFAULT 0`)
+    .run()
+    .catch(() => {})
+  await db.prepare(`ALTER TABLE users ADD COLUMN ai_period TEXT NOT NULL DEFAULT ''`).run().catch(() => {})
   // セッション署名用の共有シークレット（単一行）
   await db
     .prepare(
@@ -359,6 +381,44 @@ const DEFAULT_AI_MODEL: AiModel = 'claude-sonnet-5'
 
 function normalizeModel(v: unknown): AiModel {
   return AI_MODELS.includes(v as AiModel) ? (v as AiModel) : DEFAULT_AI_MODEL
+}
+
+// ---------- AI 利用回数の上限（プラン別） ----------
+
+/** プラン別のAI利用上限。trial=お試し（累計）/ active=月額課金中（毎月リセット） */
+export const AI_LIMITS = { trial: 5, active: 30 } as const
+export type AiPlan = keyof typeof AI_LIMITS
+
+/** 'YYYY-MM' を返す */
+function monthKey(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 7)
+}
+
+/**
+ * 現在の利用状況から、いま1回AIを使えるか判定する（純粋関数・テスト可能）。
+ * trial は累計5回まで（リセットなし）、active は毎月30回まで（月替わりで0に戻る）。
+ */
+export function evaluateAiUse(
+  plan: string | null | undefined,
+  aiUsed: number,
+  aiPeriod: string | null | undefined,
+  nowMonth: string,
+): { plan: AiPlan; limit: number; period: string; used: number; allowed: boolean; remaining: number } {
+  const p: AiPlan = plan === 'active' ? 'active' : 'trial'
+  const limit = AI_LIMITS[p]
+  const period = p === 'active' ? nowMonth : 'trial'
+  // 期間が変わっていたらカウントは0からやり直し（月額の月替わりリセット）
+  const used = aiPeriod === period ? Math.max(0, Math.floor(Number(aiUsed)) || 0) : 0
+  return { plan: p, limit, period, used, allowed: used < limit, remaining: Math.max(0, limit - used) }
+}
+
+/** DBから利用状況を読み、判定結果を返す */
+async function readAiUsage(db: D1Database, username: string) {
+  const row = await db
+    .prepare('SELECT plan, ai_used, ai_period FROM users WHERE username = ?1')
+    .bind(username)
+    .first<{ plan?: string; ai_used?: number; ai_period?: string }>()
+  return evaluateAiUse(row?.plan, Number(row?.ai_used ?? 0), row?.ai_period, monthKey())
 }
 
 /** ParsedRule（src/types.ts）に対応する構造化出力スキーマ */
@@ -541,7 +601,17 @@ export async function handleApi(
   if (path === '/api/auth/status' && request.method === 'GET') {
     const configured = (await countUsers(db)) > 0
     const user = await authedUser(request, db)
-    return json({ configured, authenticated: !!user, username: user ?? undefined })
+    if (!user) return json({ configured, authenticated: false })
+    const u = await readAiUsage(db, user)
+    return json({
+      configured,
+      authenticated: true,
+      username: user,
+      aiPlan: u.plan,
+      aiLimit: u.limit,
+      aiUsed: u.used,
+      aiRemaining: u.remaining,
+    })
   }
 
   if (path === '/api/auth/setup' && request.method === 'POST') {
@@ -553,11 +623,12 @@ export async function handleApi(
     if (username.length < 1) return json({ error: 'invalid_username' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     const secret = await ensureSessionSecret(db)
+    // 最初のアカウント（運営者）は課金対象外の active 扱い
     await db
       .prepare(
-        'INSERT INTO users (username, password_hash, created_at, status, email) VALUES (?1, ?2, ?3, ?4, ?5)',
+        'INSERT INTO users (username, password_hash, created_at, status, email, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
       )
-      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null)
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null, 'active')
       .run()
     const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
@@ -595,11 +666,12 @@ export async function handleApi(
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
 
     const secret = await ensureSessionSecret(db)
+    // 一般ユーザーの新規登録は trial（お試し。AI累計5回まで）で開始
     await db
       .prepare(
-        'INSERT INTO users (username, password_hash, created_at, status, email) VALUES (?1, ?2, ?3, ?4, ?5)',
+        'INSERT INTO users (username, password_hash, created_at, status, email, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
       )
-      .bind(username, await hashPassword(password), new Date().toISOString(), 'pending', email || null)
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'pending', email || null, 'trial')
       .run()
 
     // 承認メールを送信（失敗しても申請自体は成立させる。emailed で状況を返す）
@@ -655,12 +727,12 @@ export async function handleApi(
     if (username.length < 1) return json({ error: 'invalid_username' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
-    // 管理者による追加は即時有効（承認不要）
+    // 管理者による追加は即時有効（承認不要）・active 扱い
     await db
       .prepare(
-        'INSERT INTO users (username, password_hash, created_at, status, email) VALUES (?1, ?2, ?3, ?4, ?5)',
+        'INSERT INTO users (username, password_hash, created_at, status, email, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
       )
-      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null)
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null, 'active')
       .run()
     return json({ ok: true })
   }
@@ -668,6 +740,14 @@ export async function handleApi(
   // ---- AI（Claude）による自由文条件の解釈 ----
   if (path === '/api/ai/parse-rule' && request.method === 'POST') {
     if (!apiKey) return json({ error: 'ai_not_configured' }, 501)
+    // 利用回数の上限チェック（プラン別。呼び出し前に確認して超過なら429）
+    const usage = await readAiUsage(db, currentUser)
+    if (!usage.allowed) {
+      return json(
+        { error: 'ai_limit', plan: usage.plan, limit: usage.limit, used: usage.used, remaining: 0 },
+        429,
+      )
+    }
     const body = await readJson<{
       text?: string
       staff?: NameId[]
@@ -693,7 +773,18 @@ export async function handleApi(
         cleanList(body?.staff),
         cleanList(body?.shifts),
       )
-      return json(result)
+      // 成功したら1回消費（月替わり時は period も更新して0からカウント）
+      const newUsed = usage.used + 1
+      await db
+        .prepare('UPDATE users SET ai_used = ?1, ai_period = ?2 WHERE username = ?3')
+        .bind(newUsed, usage.period, currentUser)
+        .run()
+      return json({
+        ...result,
+        aiPlan: usage.plan,
+        aiLimit: usage.limit,
+        aiRemaining: Math.max(0, usage.limit - newUsed),
+      })
     } catch (e) {
       return json({ error: 'ai_failed', message: String(e) }, 502)
     }
