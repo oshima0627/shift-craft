@@ -4,7 +4,7 @@ import { dayCategoryOf, enumerateDates, parse, weekdayLabel } from '../utils/dat
 import { busynessOf } from '../utils/busyness'
 
 /**
- * 希望休カレンダー（全休・時間休対応）。
+ * 休みカレンダー（全休・時間休対応）。
  * スタッフ（行）× 日付（列）のマスをクリックすると、休みの種類が順に切り替わる
  * （なし → 全休 → 午前休 → 午後休 → … → なし）。
  * 時間休はその時間帯に重なるシフトにだけ入れなくなる。
@@ -55,7 +55,7 @@ export default function DayOffCalendar() {
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <h2 className="page-title">希望休カレンダー</h2>
+        <h2 className="page-title">休みカレンダー</h2>
         <p className="page-desc">
           マスをクリックすると休みの種類が切り替わります（なし → {leaveTypes.map((t) => t.name).join(' → ')} → なし）。
           時間休はその時間帯に重なるシフトにだけ入れなくなります。期間: {period.start} 〜 {period.end}。
@@ -119,7 +119,7 @@ export default function DayOffCalendar() {
 
       {dates.length === 0 || staff.length === 0 ? (
         <p className="text-base text-slate-500">
-          スタッフと対象期間（忙しさタブ）を設定すると、ここに希望休カレンダーが表示されます。
+          スタッフと対象期間（忙しさタブ）を設定すると、ここに休みカレンダーが表示されます。
         </p>
       ) : (
         <div className="card p-2 sm:p-3">

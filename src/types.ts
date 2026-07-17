@@ -144,6 +144,10 @@ export interface CustomRule {
 export interface Constraints {
   /** 同じ日に一緒にできないペア */
   incompatiblePairs: IncompatiblePair[]
+  /** NGペアを厳守するか（true=ハード制約 / false=警告のみ）。未設定は厳守扱い */
+  incompatibleHard?: boolean
+  /** 定休日（毎週の休業曜日 0=日〜6=土）。この曜日は誰も割り当てない */
+  closedWeekdays?: number[]
   /** 各シフトに必要な経験者(level>=1)の最低人数 */
   minExperiencedPerShift: number
   /** 連勤上限の既定値（労基法35条の週1休 → 原則6連勤まで） */

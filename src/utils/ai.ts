@@ -12,10 +12,10 @@ export interface AiModelOption {
   hint: string
 }
 
-/** 切り替え可能なモデル（サーバーの許可リストと一致させること） */
+/** 切り替え可能なモデル（サーバーの許可リストと一致させること）。先頭が既定 */
 export const AI_MODELS: AiModelOption[] = [
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', hint: '高速・低コスト（既定）' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', hint: '高精度（複雑な条件に強い）' },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5', hint: '高速・低コスト' },
 ]
 
 const MODEL_KEY = 'shiftcraft-ai-model'

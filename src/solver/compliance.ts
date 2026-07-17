@@ -62,6 +62,31 @@ export function validateSchedule(
     }
   }
 
+  // ---- 1b. NGペア（同じ日に出勤していないか） ----
+  if (data.constraints.incompatiblePairs.length > 0) {
+    const ngHard = data.constraints.incompatibleHard !== false
+    const dayStaff = new Map<string, Set<string>>()
+    for (const a of assignments) {
+      if (!dayStaff.has(a.date)) dayStaff.set(a.date, new Set())
+      dayStaff.get(a.date)!.add(a.staffId)
+    }
+    for (const [date, ids] of dayStaff) {
+      for (const p of data.constraints.incompatiblePairs) {
+        if (!p.a || !p.b || p.a === p.b) continue
+        if (ids.has(p.a) && ids.has(p.b)) {
+          const na = staffById.get(p.a)?.name ?? '(不明)'
+          const nb = staffById.get(p.b)?.name ?? '(不明)'
+          warnings.push({
+            date,
+            kind: 'staffing',
+            severity: ngHard ? 'error' : 'warning',
+            message: `${displayDate(date)}: NGペア「${na}」と「${nb}」が同じ日に出勤しています。`,
+          })
+        }
+      }
+    }
+  }
+
   // ---- 2. 新人のみ・経験者不足 ----
   if (data.constraints.minExperiencedPerShift > 0) {
     const byShiftGroup = new Map<string, string[]>()

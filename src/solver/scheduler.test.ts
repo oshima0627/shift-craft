@@ -519,3 +519,72 @@ describe('generateSchedule', () => {
     expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(3)
   })
 })
+
+describe('定休日（closedWeekdays）', () => {
+  it('定休曜日には誰も割り当てず、人数不足も出ない', () => {
+    // 全曜日を定休にすると割り当ては0件（必要人数0扱い）
+    const data = baseData({
+      staff: [staff('a'), staff('b')],
+      constraints: baseConstraints({ closedWeekdays: [0, 1, 2, 3, 4, 5, 6] }),
+    })
+    const res = generateSchedule(data)
+    expect(res.assignments).toHaveLength(0)
+    expect(res.unfilled).toHaveLength(0)
+  })
+
+  it('特定曜日だけ定休にするとその曜日には割り当てない', () => {
+    const wd = new Date('2026-08-03T00:00:00').getDay() // 期間内のある日の曜日
+    const data = baseData({
+      staff: [staff('a'), staff('b'), staff('c')],
+      constraints: baseConstraints({ closedWeekdays: [wd] }),
+    })
+    const res = generateSchedule(data)
+    const closedDates = res.assignments.filter(
+      (a) => new Date(a.date + 'T00:00:00').getDay() === wd,
+    )
+    expect(closedDates).toHaveLength(0)
+    expect(res.unfilled).toHaveLength(0)
+  })
+})
+
+describe('NGペアの厳守/警告', () => {
+  const twoNeeded = { roleId: 'r1', shiftId: 's1', counts: flat(2) }
+
+  it('厳守（既定）なら同じ日に一緒にしない', () => {
+    const data = baseData({
+      staff: [staff('a'), staff('b')],
+      requirements: [twoNeeded],
+      constraints: baseConstraints({ incompatiblePairs: [{ a: 'a', b: 'b' }] }),
+    })
+    const res = generateSchedule(data)
+    const byDate = new Map<string, Set<string>>()
+    for (const x of res.assignments) {
+      if (!byDate.has(x.date)) byDate.set(x.date, new Set())
+      byDate.get(x.date)!.add(x.staffId)
+    }
+    for (const ids of byDate.values()) {
+      expect(ids.has('a') && ids.has('b')).toBe(false)
+    }
+  })
+
+  it('警告のみ（incompatibleHard=false）なら同日を許容し警告を出す', () => {
+    const data = baseData({
+      staff: [staff('a'), staff('b')],
+      requirements: [twoNeeded],
+      constraints: baseConstraints({
+        incompatiblePairs: [{ a: 'a', b: 'b' }],
+        incompatibleHard: false,
+      }),
+    })
+    const res = generateSchedule(data)
+    // 警告モードなら a と b が同じ日に入ることを許容し、警告を出す
+    const byDate = new Map<string, Set<string>>()
+    for (const x of res.assignments) {
+      if (!byDate.has(x.date)) byDate.set(x.date, new Set())
+      byDate.get(x.date)!.add(x.staffId)
+    }
+    const someDayBoth = [...byDate.values()].some((ids) => ids.has('a') && ids.has('b'))
+    expect(someDayBoth).toBe(true)
+    expect(res.warnings.some((w) => w.message.includes('NGペア'))).toBe(true)
+  })
+})

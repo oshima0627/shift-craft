@@ -105,7 +105,10 @@ interface Ctx {
   staffById: Map<string, Staff>
   shiftById: Map<string, ShiftType>
   paidMinByShift: Map<string, number>
-  incompatible: Set<string>
+  /** 厳守するNGペア（＋自然文のpairAvoid） */
+  incompatibleHard: Set<string>
+  /** 警告のみのNGペア（厳守オフ時） */
+  incompatibleSoft: Set<string>
   together: Map<string, Set<string>>
   rulesByStaff: Map<string, StaffRules>
   restLimitMin: number
@@ -183,10 +186,14 @@ function emptyRules(): StaffRules {
 }
 
 function buildCtx(data: AppData, dates: string[]): Ctx {
-  const incompatible = new Set<string>()
+  // NGペア：厳守（ハード）と警告のみ（ソフト）に分ける。
+  // 自然文の「同じ日に入れない(pairAvoid)」は常にハード。
+  const incompatibleHard = new Set<string>()
+  const incompatibleSoft = new Set<string>()
+  const ngHardMode = data.constraints.incompatibleHard !== false
   for (const p of data.constraints.incompatiblePairs) {
     if (!p.a || !p.b || p.a === p.b) continue
-    incompatible.add(pairKey(p.a, p.b))
+    ;(ngHardMode ? incompatibleHard : incompatibleSoft).add(pairKey(p.a, p.b))
   }
 
   const together = new Map<string, Set<string>>()
@@ -205,7 +212,7 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
     if (!r) continue
     switch (r.kind) {
       case 'pairAvoid':
-        if (r.a !== r.b) incompatible.add(pairKey(r.a, r.b))
+        if (r.a !== r.b) incompatibleHard.add(pairKey(r.a, r.b))
         break
       case 'pairTogether':
         addTogether(r.a, r.b)
@@ -258,7 +265,8 @@ function buildCtx(data: AppData, dates: string[]): Ctx {
     staffById: new Map(data.staff.map((s) => [s.id, s])),
     shiftById: new Map(data.shifts.map((s) => [s.id, s])),
     paidMinByShift: new Map(data.shifts.map((s) => [s.id, paidMin(s)])),
-    incompatible,
+    incompatibleHard,
+    incompatibleSoft,
     together,
     rulesByStaff,
     restLimitMin: data.constraints.restIntervalHours * 60,
@@ -413,10 +421,10 @@ function hardCheck(
   const capDays = Math.min(staff.weeklyMaxDays ?? Infinity, rules?.maxDaysPerWeek ?? Infinity, 6)
   if ((st.weekDays.get(demand.weekKey) ?? 0) + 1 > capDays) return NG
 
-  // H2: NGペア（今日既に入っている人と衝突しないか）
+  // H2: NGペア（厳守分のみハード。警告のみのペアは pickStaff でソフト減点）
   for (const otherId of assignedToday) {
     if (otherId === staff.id) continue
-    if (ctx.incompatible.has(pairKey(staff.id, otherId))) return NG
+    if (ctx.incompatibleHard.has(pairKey(staff.id, otherId))) return NG
   }
 
   // 勤務間インターバル（前日の最遅シフト → 当日、当日 → 翌日の最早シフト）
@@ -728,6 +736,15 @@ function pickStaff(
     score += (staff.hourlyWage / 1000) * weights.cost * 0.5
     // S5: インターバル（ソフト時）— クローピングになる割り当てを避ける
     score += hc.restViolations * 3
+    // NGペア（警告のみ）：同日に相手がいる割り当てを強く抑制（禁止はしない）
+    if (ctx.incompatibleSoft.size > 0) {
+      for (const otherId of todayIds) {
+        if (ctx.incompatibleSoft.has(pairKey(staff.id, otherId))) {
+          score += 50
+          break
+        }
+      }
+    }
     // S6: なるべく同じ日に入れるペア
     const partners = ctx.together.get(staff.id)
     if (partners) {
