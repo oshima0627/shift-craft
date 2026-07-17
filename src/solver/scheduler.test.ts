@@ -615,3 +615,81 @@ describe('NGペアの厳守/警告', () => {
     expect(res.warnings.some((w) => w.message.includes('NGペア'))).toBe(true)
   })
 })
+
+describe('最適化（ベストプラクティス）', () => {
+  it('経験者が1名でも、2段階充足で毎日の経験者最低数を満たす', () => {
+    // 2枠/日・経験者最低1名。経験者は e1 のみ（残りは新人）。
+    // 公平化で新人を優先しがちだが、経験者予約パスで毎日 e1 が入る。
+    const data = baseData({
+      requirements: [{ roleId: 'r1', shiftId: 's1', counts: flat(2) }],
+      period: { start: '2026-08-03', end: '2026-08-07', holidays: [] }, // 月〜金（同一週）
+      staff: [
+        staff('e1', { level: 2 }),
+        staff('n1', { level: 0 }),
+        staff('n2', { level: 0 }),
+        staff('n3', { level: 0 }),
+      ],
+      constraints: baseConstraints({ minExperiencedPerShift: 1 }),
+    })
+    const res = generateSchedule(data)
+    const byDate = new Map<string, string[]>()
+    for (const a of res.assignments) {
+      if (!byDate.has(a.date)) byDate.set(a.date, [])
+      byDate.get(a.date)!.push(a.staffId)
+    }
+    for (const [, ids] of byDate) {
+      expect(ids.includes('e1')).toBe(true)
+    }
+    expect(res.warnings.filter((w) => w.severity === 'warning')).toHaveLength(0)
+    expect(res.unfilled).toHaveLength(0)
+  })
+
+  it('対応者の少ない役割（専門職）から先に埋めて構築だけで解ける', () => {
+    // r2 は a のみ対応、r1 は b/c が対応。most-constrained-first で r2 を先に確保。
+    const data = baseData({
+      roles: [
+        { id: 'r1', name: 'ホール', color: '#000' },
+        { id: 'r2', name: 'キッチン', color: '#111' },
+      ],
+      requirements: [
+        { roleId: 'r1', shiftId: 's1', counts: flat(1) },
+        { roleId: 'r2', shiftId: 's1', counts: flat(1) },
+      ],
+      period: { start: '2026-08-03', end: '2026-08-05', holidays: [] },
+      staff: [
+        staff('a', { roleIds: ['r2'] }), // 専門職（キッチンのみ）
+        staff('b', { roleIds: ['r1'] }),
+        staff('c', { roleIds: ['r1'] }),
+      ],
+    })
+    // attempts=1 でリスタートに頼らず解けること
+    const res = generateSchedule(data, 1)
+    expect(res.unfilled).toHaveLength(0)
+    for (const x of res.assignments.filter((x) => x.roleId === 'r2')) {
+      expect(x.staffId).toBe('a')
+    }
+  })
+
+  it('リスタートを増やしてもスコアは悪化しない（貪欲ベースライン + 多様化）', () => {
+    const make = () =>
+      baseData({
+        period: { start: '2026-08-01', end: '2026-08-14', holidays: [] },
+        staff: [staff('a'), staff('b'), staff('c'), staff('d'), staff('e')],
+      })
+    const one = generateSchedule(make(), 1)
+    const many = generateSchedule(make(), 40)
+    // attempt 0（純粋な貪欲）は常に候補に含まれるので、40回試行が1回を下回らない
+    expect(many.score).toBeGreaterThanOrEqual(one.score)
+  })
+
+  it('決定的: 最適化後も同じ入力からは同じ結果', () => {
+    const data = baseData({
+      period: { start: '2026-08-01', end: '2026-08-10', holidays: [] },
+      staff: [staff('a'), staff('b'), staff('c'), staff('d')],
+    })
+    const r1 = generateSchedule(data)
+    const r2 = generateSchedule(data)
+    expect(r1.assignments).toEqual(r2.assignments)
+    expect(r1.score).toBe(r2.score)
+  })
+})
