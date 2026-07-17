@@ -105,7 +105,7 @@ function AutoSync() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 text-lg text-slate-500">
       {children}
     </div>
   )
@@ -163,14 +163,13 @@ function AuthCard({
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-center gap-2">
-          <span className="text-xl">🗓️</span>
-          <h1 className="text-lg font-bold text-slate-800">ShiftCraft</h1>
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
+        <div className="mb-5">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
         </div>
-        <h2 className="text-base font-bold text-slate-700">{title}</h2>
-        <p className="mb-4 mt-1 text-sm text-slate-500">{desc}</p>
+        <h2 className="text-lg font-bold text-slate-800">{title}</h2>
+        <p className="mb-5 mt-1.5 text-base leading-relaxed text-slate-500">{desc}</p>
         <div className="space-y-3">
           <input
             ref={ref}
@@ -202,8 +201,8 @@ function AuthCard({
               onKeyDown={(e) => e.key === 'Enter' && submit()}
             />
           )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button className="btn-primary w-full" onClick={submit} disabled={busy}>
+          {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+          <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
             {busy ? '処理中…' : buttonLabel}
           </button>
         </div>

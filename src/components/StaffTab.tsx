@@ -15,10 +15,12 @@ export default function StaffTab() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-bold text-slate-700">スタッフ</h2>
-      <p className="text-sm text-slate-500">
-        各スタッフの担当役割・経験レベル・出勤上限・連勤上限・出勤不可日などを設定します。
-      </p>
+      <div className="space-y-1">
+        <h2 className="page-title">スタッフ</h2>
+        <p className="page-desc">
+          各スタッフの担当役割・経験レベル・出勤上限・連勤上限・出勤不可日などを設定します。
+        </p>
+      </div>
 
       <div className="card flex gap-2">
         <input
@@ -38,7 +40,7 @@ export default function StaffTab() {
           <StaffRow key={st.id} staff={st} />
         ))}
         {staff.length === 0 && (
-          <p className="text-sm text-slate-400">スタッフがいません。追加してください。</p>
+          <p className="text-base text-slate-400">スタッフがいません。追加してください。</p>
         )}
       </div>
     </div>
@@ -74,9 +76,9 @@ function StaffRow({ staff }: { staff: Staff }) {
 
   return (
     <div className="card space-y-3">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         <input
-          className="input max-w-[10rem] font-medium"
+          className="input max-w-[11rem] font-semibold"
           value={staff.name}
           onChange={(e) => updateStaff(staff.id, { name: e.target.value })}
         />
@@ -102,11 +104,11 @@ function StaffRow({ staff }: { staff: Staff }) {
             <span className="text-xs text-red-500">役割未設定</span>
           )}
         </div>
-        <button className="btn-ghost" onClick={() => setOpen(!open)}>
+        <button className="btn-ghost btn-sm" onClick={() => setOpen(!open)}>
           {open ? '閉じる' : '詳細'}
         </button>
         <button
-          className="btn-danger"
+          className="btn-danger btn-sm"
           onClick={() => {
             if (confirm(`スタッフ「${staff.name}」を削除しますか？`)) removeStaff(staff.id)
           }}

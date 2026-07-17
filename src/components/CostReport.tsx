@@ -39,7 +39,7 @@ export default function CostReport({
   return (
     <div className="card space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-slate-700">💰 人件費・生産性</h3>
+        <h3 className="section-title">人件費・生産性</h3>
         <div className="no-print flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <label className="flex items-center gap-1">
             期間の売上目標

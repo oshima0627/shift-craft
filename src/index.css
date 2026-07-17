@@ -3,36 +3,74 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    /* PCが苦手な人でも読みやすいよう、全体の基準文字サイズを大きめに */
+    font-size: 17px;
+    /* 画面ごとに縦スクロールバーの有無が変わってもビューポート幅が一定になり、
+       中央寄せのヘッダーが左右にずれないよう、スクロールバー分の余白を常に確保する */
+    scrollbar-gutter: stable;
+  }
   body {
-    @apply bg-slate-50 text-slate-800 antialiased;
+    @apply bg-slate-100 text-slate-800 antialiased;
     font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+    line-height: 1.65;
+  }
+  /* 数値入力のスピナーは残しつつ、タップしやすい大きさを確保 */
+  input,
+  select,
+  textarea,
+  button {
+    font-family: inherit;
   }
 }
 
 @layer components {
+  /* ===== ボタン（大きめ・押しやすい） ===== */
   .btn {
-    @apply inline-flex items-center justify-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex min-h-[2.75rem] items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-base font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-brand-500 text-white hover:bg-brand-600;
+    @apply btn bg-brand-500 text-white shadow-sm hover:bg-brand-600 active:bg-brand-700;
   }
   .btn-ghost {
-    @apply btn text-slate-600 hover:bg-slate-100;
+    @apply btn border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 active:bg-slate-100;
   }
   .btn-danger {
-    @apply btn text-red-600 hover:bg-red-50;
+    @apply btn border border-red-200 bg-white text-red-600 shadow-sm hover:bg-red-50 active:bg-red-100;
   }
+  /* 小さめが望ましい補助ボタン用（メニュー内・行内など） */
+  .btn-sm {
+    @apply min-h-0 gap-1.5 rounded-lg px-3.5 py-2 text-sm;
+  }
+
+  /* ===== カード ===== */
   .card {
-    @apply rounded-lg border border-slate-200 bg-white p-4 shadow-sm;
+    @apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6;
   }
+
+  /* ===== 入力欄（大きめ・枠がはっきり） ===== */
   .input {
-    @apply w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500;
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-800 transition-colors placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200;
   }
   .label {
-    @apply block text-xs font-medium text-slate-500 mb-1;
+    @apply mb-1.5 block text-sm font-semibold text-slate-600;
   }
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium;
+  }
+
+  /* ===== 見出し（統一・大きめ） ===== */
+  .page-title {
+    @apply text-2xl font-bold text-slate-900;
+  }
+  .page-desc {
+    @apply text-base leading-relaxed text-slate-500;
+  }
+  .section-title {
+    @apply text-lg font-bold text-slate-800;
+  }
+  .section-desc {
+    @apply text-sm leading-relaxed text-slate-500;
   }
 }
 

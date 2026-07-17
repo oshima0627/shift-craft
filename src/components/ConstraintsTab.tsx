@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
+import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
 
 export default function ConstraintsTab() {
   const staff = useStore((s) => s.data.staff)
@@ -11,6 +12,8 @@ export default function ConstraintsTab() {
   const [pairB, setPairB] = useState('')
   const [ruleText, setRuleText] = useState('')
   const [ruleFeedback, setRuleFeedback] = useState<string | null>(null)
+  const [aiModel, setAiModel] = useState<string>(() => getSelectedModel())
+  const [aiBusy, setAiBusy] = useState(false)
 
   const nameOf = (id: string) => staff.find((s) => s.id === id)?.name ?? '(不明)'
 
@@ -44,7 +47,38 @@ export default function ConstraintsTab() {
         { id: newId('rule'), text, parsed: result.parsed },
       ],
     })
-    setRuleFeedback(result.parsed ? `✅ 解釈: ${result.description}` : `⚠️ ${result.description}`)
+    setRuleFeedback(result.parsed ? `解釈: ${result.description}` : `未解釈: ${result.description}`)
+    setRuleText('')
+  }
+
+  const changeModel = (model: string) => {
+    setAiModel(model)
+    setSelectedModel(model)
+  }
+
+  const addWithAi = async () => {
+    const text = ruleText.trim()
+    if (!text || aiBusy) return
+    setAiBusy(true)
+    setRuleFeedback('AIで解釈中…')
+    const outcome = await aiParseRule(text, staff, shifts, aiModel)
+    setAiBusy(false)
+    if (!outcome.ok) {
+      const msg =
+        outcome.kind === 'not_configured'
+          ? 'AI解釈は利用できません（サーバーにAPIキーが未設定です）。'
+          : outcome.kind === 'unauthorized'
+            ? 'AI解釈にはログインが必要です。'
+            : 'AI解釈に失敗しました。通信状況を確認してください。'
+      setRuleFeedback(`⚠ ${msg}`)
+      return
+    }
+    const { parsed, description } = outcome.result
+    updateConstraints({
+      customRules: [...constraints.customRules, { id: newId('rule'), text, parsed }],
+    })
+    const modelLabel = AI_MODELS.find((m) => m.id === aiModel)?.label ?? aiModel
+    setRuleFeedback(parsed ? `AI解釈（${modelLabel}）: ${description}` : `AI（未解釈）: ${description}`)
     setRuleText('')
   }
 
@@ -56,13 +90,13 @@ export default function ConstraintsTab() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-bold text-slate-700">条件（制約）</h2>
+      <h2 className="page-title">条件（制約）</h2>
 
       {/* 労働法・働き方ルール */}
       <div className="card space-y-4">
-        <div>
-          <h3 className="text-sm font-bold text-slate-700">⚖️ 労働法・働き方ルール</h3>
-          <p className="text-xs text-slate-500">
+        <div className="space-y-1">
+          <h3 className="section-title">労働法・働き方ルール</h3>
+          <p className="section-desc">
             労働基準法と厚労省の指針に基づく既定値を設定済みです。生成時に自動で守られ、
             手動編集後も違反があれば警告されます。
           </p>
@@ -82,7 +116,7 @@ export default function ConstraintsTab() {
                 })
               }
             />
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1.5 text-sm text-slate-400">
               毎週1日以上の休日が必要（労基法35条）→ 原則6連勤まで。
             </p>
           </div>
@@ -96,7 +130,7 @@ export default function ConstraintsTab() {
               <option value={40}>40時間（法定・原則）</option>
               <option value={44}>44時間（特例措置対象事業場）</option>
             </select>
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1.5 text-sm text-slate-400">
               常時10人未満の飲食店は特例で週44hまで可。18歳未満は常に40h厳守。
             </p>
           </div>
@@ -112,7 +146,7 @@ export default function ConstraintsTab() {
                 updateConstraints({ restIntervalHours: Math.max(0, Number(e.target.value)) })
               }
             />
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1.5 text-sm text-slate-400">
               終業→翌始業の休息。厚労省の目安は9〜11h。遅番→翌早番（クローピング）を防ぎます。0=チェックなし。
             </p>
           </div>
@@ -120,7 +154,7 @@ export default function ConstraintsTab() {
             <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
               <input
                 type="checkbox"
-                className="h-4 w-4 accent-brand-500"
+                className="h-5 w-5 accent-brand-500"
                 checked={constraints.restIntervalHard}
                 onChange={(e) => updateConstraints({ restIntervalHard: e.target.checked })}
               />
@@ -131,12 +165,12 @@ export default function ConstraintsTab() {
             <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
               <input
                 type="checkbox"
-                className="h-4 w-4 accent-brand-500"
+                className="h-5 w-5 accent-brand-500"
                 checked={constraints.allowSplitShifts}
                 onChange={(e) => updateConstraints({ allowSplitShifts: e.target.checked })}
               />
               同じ日に複数シフトを許可する（分割勤務）
-              <span className="text-xs text-slate-400">
+              <span className="text-sm text-slate-400">
                 — 早番の後に遅番など、時間帯が重ならなければ同じ人を1日に複数入れられます
               </span>
             </label>
@@ -146,12 +180,12 @@ export default function ConstraintsTab() {
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
                 <input
                   type="checkbox"
-                  className="h-4 w-4 accent-brand-500"
+                  className="h-5 w-5 accent-brand-500"
                   checked={constraints.preferSplitShifts}
                   onChange={(e) => updateConstraints({ preferSplitShifts: e.target.checked })}
                 />
                 分割勤務を積極的に使う（少人数で回す）
-                <span className="text-xs text-slate-400">
+                <span className="text-sm text-slate-400">
                   — ONにすると、人手に余裕があっても同じ人に早番＋遅番を優先的に割り当てます
                 </span>
               </label>
@@ -163,10 +197,10 @@ export default function ConstraintsTab() {
       {/* NGペア */}
       <div className="card space-y-3">
         <div>
-          <h3 className="text-sm font-bold text-slate-700">
-            🚫 同じ日に出勤させない（NGペア）
+          <h3 className="section-title">
+            同じ日に出勤させない（NGペア）
           </h3>
-          <p className="text-xs text-slate-500">
+          <p className="section-desc">
             指定した2人は同じ日に一緒のシフトに入りません（ハード制約）。
           </p>
         </div>
@@ -202,15 +236,15 @@ export default function ConstraintsTab() {
             </span>
           ))}
           {constraints.incompatiblePairs.length === 0 && (
-            <span className="text-xs text-slate-400">NGペアはありません。</span>
+            <span className="text-sm text-slate-400">NGペアはありません。</span>
           )}
         </div>
       </div>
 
       {/* 経験者最低数 */}
       <div className="card space-y-2">
-        <h3 className="text-sm font-bold text-slate-700">🧑‍🏫 新人だけにしない</h3>
-        <p className="text-xs text-slate-500">
+        <h3 className="section-title">新人だけにしない</h3>
+        <p className="section-desc">
           各シフトに経験者（新人以外）を最低何名配置するか。1以上で「新人だけ」を防ぎます。
         </p>
         <div className="flex items-center gap-2">
@@ -229,10 +263,10 @@ export default function ConstraintsTab() {
 
       {/* カスタム条件（自然文） */}
       <div className="card space-y-3">
-        <div>
-          <h3 className="text-sm font-bold text-slate-700">💬 その他の条件（文章で入力）</h3>
-          <p className="text-xs text-slate-500">
-            文章で書くとルールベース（AI不使用）で自動解釈します。例:
+        <div className="space-y-1">
+          <h3 className="section-title">その他の条件（文章で入力）</h3>
+          <p className="section-desc">
+            文章で書くと自動でルールに変換します。例:
             「田中と佐藤は同じ日に入れない」「高橋は火曜は休み」「伊藤は週3日まで」
             「鈴木は遅番に入れない」「田中は金曜は早番固定」「佐藤は4連勤まで」
           </p>
@@ -244,12 +278,37 @@ export default function ConstraintsTab() {
             value={ruleText}
             onChange={(e) => setRuleText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addCustomRule()}
+            disabled={aiBusy}
           />
-          <button className="btn-primary" onClick={addCustomRule}>
+          <button className="btn-primary" onClick={addCustomRule} disabled={aiBusy}>
             追加
           </button>
         </div>
-        {ruleFeedback && <p className="text-xs text-slate-600">{ruleFeedback}</p>}
+
+        {/* AI解釈（複雑な文はこちら。モデルを切り替え可能） */}
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <span className="text-sm text-slate-600">
+            うまく変換されないときは <b>AIで解釈</b>：
+          </span>
+          <select
+            className="input max-w-[13rem]"
+            value={aiModel}
+            onChange={(e) => changeModel(e.target.value)}
+            disabled={aiBusy}
+            title="使用するAIモデルを切り替えます"
+          >
+            {AI_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}（{m.hint}）
+              </option>
+            ))}
+          </select>
+          <button className="btn-ghost btn-sm" onClick={addWithAi} disabled={aiBusy || !ruleText.trim()}>
+            {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
+          </button>
+        </div>
+
+        {ruleFeedback && <p className="text-sm font-medium text-slate-600">{ruleFeedback}</p>}
         <div className="space-y-1.5">
           {constraints.customRules.map((r) => (
             <div
@@ -262,7 +321,7 @@ export default function ConstraintsTab() {
             >
               <div>
                 <p>{r.text}</p>
-                <p className="text-xs opacity-70">
+                <p className="text-sm opacity-70">
                   {r.parsed
                     ? `→ ${describeRule(r.parsed, staff, shifts)}`
                     : '→ 未解釈（メモとして生成結果に表示されます）'}
@@ -277,14 +336,14 @@ export default function ConstraintsTab() {
             </div>
           ))}
           {constraints.customRules.length === 0 && (
-            <span className="text-xs text-slate-400">カスタム条件はありません。</span>
+            <span className="text-sm text-slate-400">カスタム条件はありません。</span>
           )}
         </div>
       </div>
 
       {/* ソフト制約の重み */}
       <div className="card space-y-3">
-        <h3 className="text-sm font-bold text-slate-700">⚖️ 優先度（ソフト制約の重み）</h3>
+        <h3 className="section-title">優先度（ソフト制約の重み）</h3>
         <div className="space-y-3">
           <WeightSlider
             label="出勤回数の公平化"
@@ -315,8 +374,8 @@ export default function ConstraintsTab() {
 
       {/* メモ */}
       <div className="card space-y-2">
-        <h3 className="text-sm font-bold text-slate-700">📝 その他の条件メモ</h3>
-        <p className="text-xs text-slate-500">
+        <h3 className="section-title">その他の条件メモ</h3>
+        <p className="section-desc">
           自動化しきれない条件を書き留めておけます（生成結果と一緒に表示され、手動調整の参考になります）。
         </p>
         <textarea
@@ -345,7 +404,7 @@ function WeightSlider({
     <div>
       <div className="flex items-center justify-between">
         <label className="text-sm font-medium text-slate-600">{label}</label>
-        <span className="text-xs text-slate-400">{value.toFixed(1)}</span>
+        <span className="text-sm text-slate-400">{value.toFixed(1)}</span>
       </div>
       <input
         type="range"
@@ -356,7 +415,7 @@ function WeightSlider({
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-brand-500"
       />
-      <p className="text-xs text-slate-400">{hint}</p>
+      <p className="text-sm text-slate-400">{hint}</p>
     </div>
   )
 }
