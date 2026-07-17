@@ -7,6 +7,7 @@ import {
   logout as apiLogout,
   pullCloudIntoStore,
   pushCloudIfChanged,
+  requestAccess,
   setupAccount,
 } from '../utils/cloud'
 
@@ -55,6 +56,10 @@ export default function AuthShell() {
 
   if (phase === 'loading') {
     return <Centered>読み込み中…</Centered>
+  }
+  // 新規登録の申請ページ（公開URL /register）。ログイン前でも開ける。
+  if (typeof window !== 'undefined' && window.location.pathname === '/register') {
+    return <RegisterScreen />
   }
   if (phase === 'setup') {
     return <SetupScreen onDone={enterAuthed} />
@@ -117,18 +122,33 @@ function AuthCard({
   buttonLabel,
   onSubmit,
   confirm,
+  withEmail,
+  doneMessage,
+  footer,
 }: {
   title: string
   desc: string
   buttonLabel: string
-  onSubmit: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  onSubmit: (
+    username: string,
+    password: string,
+    email: string,
+  ) => Promise<{ ok: boolean; error?: string }>
   confirm?: boolean
+  /** 連絡先メール入力欄を出すか（申請フォーム用） */
+  withEmail?: boolean
+  /** 成功時にフォームの代わりに表示する完了メッセージ（申請フォーム用） */
+  doneMessage?: string
+  /** カード下部に表示する補助リンク等 */
+  footer?: React.ReactNode
 }) {
   const [id, setId] = useState('')
   const [pw, setPw] = useState('')
   const [pw2, setPw2] = useState('')
+  const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => ref.current?.focus(), [])
 
@@ -147,65 +167,95 @@ function AuthCard({
       return
     }
     setBusy(true)
-    const res = await onSubmit(id.trim(), pw)
+    const res = await onSubmit(id.trim(), pw, email.trim())
     setBusy(false)
-    if (!res.ok) {
-      setError(
-        res.error === 'invalid_credentials'
-          ? 'IDまたはパスワードが違います。'
-          : res.error === 'weak_password'
-            ? 'パスワードは4文字以上にしてください。'
-            : res.error === 'invalid_username'
-              ? 'IDを入力してください。'
-              : 'エラーが発生しました。通信状況を確認してください。',
-      )
+    if (res.ok) {
+      if (doneMessage) setDone(true)
+      return
     }
+    setError(
+      res.error === 'invalid_credentials'
+        ? 'IDまたはパスワードが違います。'
+        : res.error === 'pending_approval'
+          ? 'このアカウントはまだ承認されていません。管理者の承認後にログインできます。'
+          : res.error === 'username_taken'
+            ? 'そのIDは既に使われています。別のIDにしてください。'
+            : res.error === 'weak_password'
+              ? 'パスワードは4文字以上にしてください。'
+              : res.error === 'invalid_username'
+                ? 'IDを入力してください。'
+                : res.error === 'not_configured'
+                  ? 'まだ管理者アカウントが作成されていないため申請できません。'
+                  : 'エラーが発生しました。通信状況を確認してください。',
+    )
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
         <div className="mb-5">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
         </div>
         <h2 className="text-lg font-bold text-slate-800">{title}</h2>
         <p className="mb-5 mt-1.5 text-base leading-relaxed text-slate-500">{desc}</p>
-        <div className="space-y-3">
-          <input
-            ref={ref}
-            type="text"
-            autoComplete="username"
-            className="input"
-            placeholder="ID（ユーザー名）"
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-          />
-          <input
-            type="password"
-            autoComplete={confirm ? 'new-password' : 'current-password'}
-            className="input"
-            placeholder="パスワード"
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !confirm && submit()}
-          />
-          {confirm && (
+
+        {done && doneMessage ? (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-base leading-relaxed text-emerald-800">
+              {doneMessage}
+            </div>
+            {footer}
+          </div>
+        ) : (
+          <div className="space-y-3">
             <input
-              type="password"
-              autoComplete="new-password"
+              ref={ref}
+              type="text"
+              autoComplete="username"
               className="input"
-              placeholder="パスワード（確認）"
-              value={pw2}
-              onChange={(e) => setPw2(e.target.value)}
+              placeholder="ID（ユーザー名）"
+              value={id}
+              onChange={(e) => setId(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
             />
-          )}
-          {error && <p className="text-sm font-medium text-red-600">{error}</p>}
-          <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
-            {busy ? '処理中…' : buttonLabel}
-          </button>
-        </div>
+            <input
+              type="password"
+              autoComplete={confirm ? 'new-password' : 'current-password'}
+              className="input"
+              placeholder="パスワード"
+              value={pw}
+              onChange={(e) => setPw(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !confirm && submit()}
+            />
+            {confirm && (
+              <input
+                type="password"
+                autoComplete="new-password"
+                className="input"
+                placeholder="パスワード（確認）"
+                value={pw2}
+                onChange={(e) => setPw2(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit()}
+              />
+            )}
+            {withEmail && (
+              <input
+                type="email"
+                autoComplete="email"
+                className="input"
+                placeholder="連絡先メール（任意・承認者への案内用）"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit()}
+              />
+            )}
+            {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+            <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
+              {busy ? '処理中…' : buttonLabel}
+            </button>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -228,6 +278,8 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
 }
 
 function LoginScreen({ onDone }: { onDone: () => void }) {
+  const registerUrl =
+    (typeof window !== 'undefined' ? window.location.origin : '') + '/register'
   return (
     <AuthCard
       title="ログイン"
@@ -238,6 +290,41 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
         if (res.ok) await onDone()
         return res
       }}
+      footer={
+        <div className="border-t border-slate-100 pt-4 text-sm leading-relaxed text-slate-500">
+          <p>
+            アカウントをお持ちでない方は、下記の新規登録ページから申請してください。
+            管理者の承認後にログインできます。
+          </p>
+          <p className="mt-2">
+            <a href="/register" className="font-semibold text-brand-600 hover:underline">
+              新規登録はこちら
+            </a>
+          </p>
+          <p className="mt-1 break-all text-slate-400">{registerUrl}</p>
+        </div>
+      }
+    />
+  )
+}
+
+function RegisterScreen() {
+  return (
+    <AuthCard
+      title="新規登録の申請"
+      desc="希望するID（ユーザー名）とパスワードを入力して申請してください。管理者(oshima6.27@gmail.com)に確認メールが届き、承認されると、このID＋パスワードでログインできるようになります。"
+      buttonLabel="この内容で申請する"
+      confirm
+      withEmail
+      doneMessage="申請を受け付けました。管理者が承認すると、入力したID＋パスワードでログインできます。承認までしばらくお待ちください。"
+      onSubmit={async (id, pw, email) => requestAccess(id, pw, email)}
+      footer={
+        <p className="text-sm text-slate-500">
+          <a href="/" className="font-semibold text-brand-600 hover:underline">
+            ← ログイン画面へ戻る
+          </a>
+        </p>
+      }
     />
   )
 }

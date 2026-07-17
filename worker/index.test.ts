@@ -7,7 +7,10 @@ import { handleApi, type D1Database, type D1PreparedStatement } from './index'
 function fakeDb() {
   let settings: { json: string; updated_at: string } | null = null
   let meta: { session_secret: string } | null = null
-  const users = new Map<string, { username: string; password_hash: string }>()
+  const users = new Map<
+    string,
+    { username: string; password_hash: string; status: string; email: string | null }
+  >()
   let history: { id: number; json: string; saved_at: string }[] = []
   let seq = 0
 
@@ -57,7 +60,13 @@ function fakeDb() {
             users.set(bound[0] as string, {
               username: bound[0] as string,
               password_hash: bound[1] as string,
+              status: (bound[3] as string) ?? 'active',
+              email: (bound[4] as string | null) ?? null,
             })
+            return
+          }
+          if (query.startsWith('UPDATE users SET status') || query.startsWith('DELETE FROM users')) {
+            // 承認/却下（テストでは未使用だが、SQL到達時に落ちないように受ける）
             return
           }
           throw new Error(`unexpected run(): ${query}`)
@@ -189,6 +198,63 @@ describe('worker 認証（ID＋パスワード）', () => {
     const { db } = await authed()
     const reg = await handleApi(req('/api/auth/register', 'POST', { username: 'x', password: 'abcd' }), db)
     expect(reg.status).toBe(401)
+  })
+})
+
+describe('worker 新規登録の申請＆承認', () => {
+  it('管理者未作成なら申請不可（400）', async () => {
+    const db = fakeDb()
+    const res = await handleApi(
+      req('/api/auth/request-access', 'POST', { username: 'newbie', password: 'abcd' }),
+      db,
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('申請すると承認待ちで作成され、メール未設定でも申請自体は成立', async () => {
+    const { db } = await authed()
+    const res = await handleApi(
+      req('/api/auth/request-access', 'POST', {
+        username: 'newbie',
+        password: 'abcd',
+        email: 'n@example.com',
+      }),
+      db,
+    )
+    expect(res.status).toBe(200)
+    // メール送信バインディング未指定 → emailed:false（申請は成立）
+    expect(await res.json()).toMatchObject({ ok: true, emailed: false })
+  })
+
+  it('承認待ちアカウントはログイン不可（403 pending_approval）', async () => {
+    const { db } = await authed()
+    await handleApi(
+      req('/api/auth/request-access', 'POST', { username: 'newbie', password: 'abcd' }),
+      db,
+    )
+    const res = await handleApi(
+      req('/api/auth/login', 'POST', { username: 'newbie', password: 'abcd' }),
+      db,
+    )
+    expect(res.status).toBe(403)
+    expect(await res.json()).toMatchObject({ error: 'pending_approval' })
+  })
+
+  it('既存IDでの申請は409', async () => {
+    const { db } = await authed()
+    const res = await handleApi(
+      req('/api/auth/request-access', 'POST', { username: USER, password: 'abcd' }),
+      db,
+    )
+    expect(res.status).toBe(409)
+  })
+
+  it('不正な承認トークンはHTMLでエラー表示（200）', async () => {
+    const { db } = await authed()
+    const res = await handleApi(req('/api/auth/approve?token=bogus', 'GET'), db)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    expect(await res.text()).toContain('リンクが無効です')
   })
 })
 

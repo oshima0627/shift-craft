@@ -18,5 +18,14 @@
       "database_id": "00a1fa9b-482b-4b0a-a02e-b996e54bbb4a",
       "migrations_dir": "migrations"
     }
+  ],
+  // 新規登録の承認メールを管理者へ送るための Email Routing 送信バインディング。
+  // 事前に nexeed-lab.com で Email Routing を有効化し、宛先(oshima6.27@gmail.com)を
+  // 「Destination address」として検証しておく必要がある（docs/deploy-cloudflare.md 参照）。
+  "send_email": [
+    {
+      "name": "SEND_EMAIL",
+      "destination_address": "oshima6.27@gmail.com"
+    }
   ]
 }

@@ -29,6 +29,11 @@ export interface D1Database {
   prepare(query: string): D1PreparedStatement
 }
 
+/** Email Routing 送信バインディング（cloudflare:email）の最小型 */
+export interface SendEmailBinding {
+  send(message: unknown): Promise<void>
+}
+
 export interface Env {
   DB: D1Database
   ASSETS: { fetch(request: Request): Promise<Response> }
@@ -37,7 +42,16 @@ export interface Env {
    * 未設定の場合はAI解釈機能が無効になる（他機能は影響なし）。
    */
   ANTHROPIC_API_KEY?: string
+  /** 承認メール送信用（wrangler.jsonc の send_email バインディング） */
+  SEND_EMAIL?: SendEmailBinding
 }
+
+/** 新規登録の承認メールの宛先（管理者） */
+const ADMIN_EMAIL = 'oshima6.27@gmail.com'
+/** 送信元アドレス（Email Routing を有効化した独自ドメインのアドレス） */
+const MAIL_FROM = 'noreply@nexeed-lab.com'
+/** 承認リンクの有効期限（7日） */
+const APPROVAL_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 const HISTORY_KEEP = 20
 const MAX_BODY_BYTES = 1_000_000
@@ -52,6 +66,9 @@ interface SettingsRow {
 interface UserRow {
   username: string
   password_hash: string
+  /** 'active'=ログイン可 / 'pending'=承認待ち */
+  status?: string
+  email?: string | null
 }
 
 // ---------- 共通ユーティリティ ----------
@@ -144,6 +161,91 @@ async function verifySessionToken(token: string, secret: string): Promise<string
   }
 }
 
+/** 承認/却下リンク用の署名トークン（HMAC）。sub=ユーザー名, act=approve|deny */
+async function signApproval(secret: string, username: string, act: 'approve' | 'deny'): Promise<string> {
+  const payload = b64(enc.encode(JSON.stringify({ exp: Date.now() + APPROVAL_TTL_MS, sub: username, act })))
+  const sig = await hmac(secret, payload)
+  return `${payload}.${sig}`
+}
+
+async function verifyApproval(
+  token: string,
+  secret: string,
+): Promise<{ sub: string; act: 'approve' | 'deny' } | null> {
+  const dot = token.indexOf('.')
+  if (dot < 0) return null
+  const payload = token.slice(0, dot)
+  const sig = token.slice(dot + 1)
+  const expected = await hmac(secret, payload)
+  if (!timingSafeEqual(sig, expected)) return null
+  try {
+    const { exp, sub, act } = JSON.parse(dec.decode(fromB64(payload))) as {
+      exp: number
+      sub: string
+      act: 'approve' | 'deny'
+    }
+    if (typeof exp !== 'number' || Date.now() >= exp) return null
+    if (typeof sub !== 'string' || (act !== 'approve' && act !== 'deny')) return null
+    return { sub, act }
+  } catch {
+    return null
+  }
+}
+
+/** 管理者へ承認依頼メールを送る（Email Routing 送信バインディング経由） */
+async function sendApprovalMail(
+  binding: SendEmailBinding | undefined,
+  origin: string,
+  username: string,
+  requesterEmail: string | null,
+  approveToken: string,
+  denyToken: string,
+): Promise<void> {
+  if (!binding) throw new Error('send_email binding not configured')
+  // cloudflare:email は Workers ランタイム専用モジュール（動的importでテスト環境の解決を避ける）
+  // @ts-ignore
+  const { EmailMessage } = await import('cloudflare:email')
+  const { createMimeMessage } = await import('mimetext')
+  const approveUrl = `${origin}/api/auth/approve?token=${encodeURIComponent(approveToken)}`
+  const denyUrl = `${origin}/api/auth/deny?token=${encodeURIComponent(denyToken)}`
+  const msg = createMimeMessage()
+  msg.setSender({ name: 'ShiftCraft', addr: MAIL_FROM })
+  msg.setRecipient(ADMIN_EMAIL)
+  msg.setSubject(`【ShiftCraft】新規登録の承認依頼: ${username}`)
+  msg.addMessage({
+    contentType: 'text/plain',
+    data: [
+      'ShiftCraft に新しい登録申請がありました。',
+      '',
+      `ユーザーID: ${username}`,
+      `連絡先: ${requesterEmail || '（未入力）'}`,
+      '',
+      '▼ 承認する（このユーザーがログインできるようになります）',
+      approveUrl,
+      '',
+      '▼ 却下する（申請を削除します）',
+      denyUrl,
+      '',
+      '心当たりが無い場合は「却下」を押してください。リンクの有効期限は7日間です。',
+    ].join('\n'),
+  })
+  const email = new EmailMessage(MAIL_FROM, ADMIN_EMAIL, msg.asRaw())
+  await binding.send(email)
+}
+
+/** 承認/却下の結果をブラウザに返す簡易HTMLページ */
+function htmlPage(title: string, body: string): Response {
+  return new Response(
+    `<!doctype html><html lang="ja"><head><meta charset="utf-8">` +
+      `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+      `<title>${title}</title></head>` +
+      `<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:12vh auto;padding:0 1.5rem;color:#1e293b;line-height:1.7">` +
+      `<h1 style="font-size:1.4rem">${title}</h1><p>${body}</p>` +
+      `<p><a href="/" style="color:#2f59c4">ShiftCraft を開く</a></p></body></html>`,
+    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } },
+  )
+}
+
 function readCookie(request: Request, name: string): string | null {
   const header = request.headers.get('cookie')
   if (!header) return null
@@ -177,13 +279,21 @@ async function ensureSchema(db: D1Database): Promise<void> {
          id INTEGER PRIMARY KEY AUTOINCREMENT, json TEXT NOT NULL, saved_at TEXT NOT NULL)`,
     )
     .run()
-  // ユーザー（ID＋パスワード）。複数アカウント可
+  // ユーザー（ID＋パスワード）。複数アカウント可。
+  // status: 'active'=ログイン可 / 'pending'=承認待ち。email: 申請者の連絡先（任意）。
   await db
     .prepare(
       `CREATE TABLE IF NOT EXISTS users (
-         username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, created_at TEXT NOT NULL)`,
+         username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, created_at TEXT NOT NULL,
+         status TEXT NOT NULL DEFAULT 'active', email TEXT)`,
     )
     .run()
+  // 既存DB（旧スキーマ）へのカラム追加。既にあれば無視する。
+  await db
+    .prepare(`ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
+    .run()
+    .catch(() => {})
+  await db.prepare(`ALTER TABLE users ADD COLUMN email TEXT`).run().catch(() => {})
   // セッション署名用の共有シークレット（単一行）
   await db
     .prepare(
@@ -219,7 +329,7 @@ async function countUsers(db: D1Database): Promise<number> {
 
 async function getUser(db: D1Database, username: string): Promise<UserRow | null> {
   return db
-    .prepare('SELECT username, password_hash FROM users WHERE username = ?1')
+    .prepare('SELECT username, password_hash, status, email FROM users WHERE username = ?1')
     .bind(username)
     .first<UserRow>()
 }
@@ -421,6 +531,7 @@ export async function handleApi(
   request: Request,
   db: D1Database,
   apiKey?: string,
+  sendEmail?: SendEmailBinding,
 ): Promise<Response> {
   await ensureSchema(db)
   const url = new URL(request.url)
@@ -443,8 +554,10 @@ export async function handleApi(
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     const secret = await ensureSessionSecret(db)
     await db
-      .prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)')
-      .bind(username, await hashPassword(password), new Date().toISOString())
+      .prepare(
+        'INSERT INTO users (username, password_hash, created_at, status, email) VALUES (?1, ?2, ?3, ?4, ?5)',
+      )
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null)
       .run()
     const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
@@ -458,6 +571,8 @@ export async function handleApi(
     const user = await getUser(db, username)
     const ok = user ? await verifyPassword(password, user.password_hash) : false
     if (!ok) return json({ error: 'invalid_credentials' }, 401)
+    // 承認待ちのアカウントはログイン不可
+    if (user && user.status === 'pending') return json({ error: 'pending_approval' }, 403)
     const secret = await ensureSessionSecret(db)
     const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
@@ -465,6 +580,65 @@ export async function handleApi(
 
   if (path === '/api/auth/logout' && request.method === 'POST') {
     return json({ ok: true }, 200, { 'set-cookie': clearCookie() })
+  }
+
+  // ---- 一般ユーザーの新規登録申請（公開・管理者の承認が必要） ----
+  if (path === '/api/auth/request-access' && request.method === 'POST') {
+    // 管理者アカウント（承認者）が未作成なら申請不可
+    if ((await countUsers(db)) === 0) return json({ error: 'not_configured' }, 400)
+    const body = await readJson<{ username?: string; password?: string; email?: string }>(request)
+    const username = normalizeUsername(body?.username)
+    const password = (body?.password ?? '').trim()
+    const email = typeof body?.email === 'string' ? body.email.trim().slice(0, 200) : ''
+    if (username.length < 1) return json({ error: 'invalid_username' }, 400)
+    if (password.length < 4) return json({ error: 'weak_password' }, 400)
+    if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
+
+    const secret = await ensureSessionSecret(db)
+    await db
+      .prepare(
+        'INSERT INTO users (username, password_hash, created_at, status, email) VALUES (?1, ?2, ?3, ?4, ?5)',
+      )
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'pending', email || null)
+      .run()
+
+    // 承認メールを送信（失敗しても申請自体は成立させる。emailed で状況を返す）
+    let emailed = false
+    try {
+      const approveToken = await signApproval(secret, username, 'approve')
+      const denyToken = await signApproval(secret, username, 'deny')
+      await sendApprovalMail(sendEmail, url.origin, username, email || null, approveToken, denyToken)
+      emailed = true
+    } catch {
+      emailed = false
+    }
+    return json({ ok: true, emailed })
+  }
+
+  // ---- 承認 / 却下（メール内リンク。署名トークンで認可） ----
+  if ((path === '/api/auth/approve' || path === '/api/auth/deny') && request.method === 'GET') {
+    const secret = await getSessionSecret(db)
+    const token = url.searchParams.get('token') ?? ''
+    const v = secret ? await verifyApproval(token, secret) : null
+    const wantAct = path.endsWith('approve') ? 'approve' : 'deny'
+    if (!v || v.act !== wantAct) {
+      return htmlPage('リンクが無効です', 'リンクの有効期限が切れているか、正しくありません。')
+    }
+    if (v.act === 'approve') {
+      await db
+        .prepare("UPDATE users SET status = 'active' WHERE username = ?1 AND status = 'pending'")
+        .bind(v.sub)
+        .run()
+      return htmlPage(
+        '承認しました',
+        `ユーザー「${v.sub}」を承認しました。本人はこのIDとパスワードでログインできます。`,
+      )
+    }
+    await db
+      .prepare("DELETE FROM users WHERE username = ?1 AND status = 'pending'")
+      .bind(v.sub)
+      .run()
+    return htmlPage('却下しました', `ユーザー「${v.sub}」の登録申請を削除しました。`)
   }
 
   // ---- ここから先は要ログイン ----
@@ -481,9 +655,12 @@ export async function handleApi(
     if (username.length < 1) return json({ error: 'invalid_username' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
+    // 管理者による追加は即時有効（承認不要）
     await db
-      .prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)')
-      .bind(username, await hashPassword(password), new Date().toISOString())
+      .prepare(
+        'INSERT INTO users (username, password_hash, created_at, status, email) VALUES (?1, ?2, ?3, ?4, ?5)',
+      )
+      .bind(username, await hashPassword(password), new Date().toISOString(), 'active', null)
       .run()
     return json({ ok: true })
   }
@@ -604,7 +781,7 @@ export default {
     const url = new URL(request.url)
     if (url.pathname.startsWith('/api/')) {
       try {
-        return await handleApi(request, env.DB, env.ANTHROPIC_API_KEY)
+        return await handleApi(request, env.DB, env.ANTHROPIC_API_KEY, env.SEND_EMAIL)
       } catch (e) {
         return json({ error: 'internal', message: String(e) }, 500)
       }
