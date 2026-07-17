@@ -4,6 +4,8 @@
   "name": "shift-craft",
   "main": "worker/index.ts",
   "compatibility_date": "2026-07-01",
+  // @anthropic-ai/sdk / mimetext が Node 組み込み(path 等)を使うため必須
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
