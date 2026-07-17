@@ -3,6 +3,8 @@ import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
 import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
 import { getAuthStatus, type AiUsage } from '../utils/cloud'
+import { useEntitlement } from '../utils/useEntitlement'
+import BillingModal from './BillingModal'
 import type { ParsedRule } from '../types'
 
 type RuleKind = ParsedRule['kind']
@@ -39,12 +41,16 @@ export default function ConstraintsTab() {
   const [aiModel, setAiModel] = useState<string>(() => getSelectedModel())
   const [aiBusy, setAiBusy] = useState(false)
   const [aiUsage, setAiUsage] = useState<AiUsage | null>(null)
+  const [billingOpen, setBillingOpen] = useState(false)
+  const ent = useEntitlement()
   // 起動時にAI利用状況（残り回数）を取得
   useEffect(() => {
     void getAuthStatus().then((s) => {
       if (s.backend && s.aiUsage) setAiUsage(s.aiUsage)
     })
   }, [])
+  // 有料機能がロックされているか（free層）
+  const aiLocked = aiUsage?.tier === 'free' || ent.locked
   // 項目から追加（かんたん）フォームの状態
   const [rKind, setRKind] = useState<RuleKind>('pairTogether')
   const [rStaffA, setRStaffA] = useState('')
@@ -175,13 +181,19 @@ export default function ConstraintsTab() {
     setAiBusy(false)
     if (!outcome.ok) {
       if (outcome.kind === 'limit') {
-        const planLabel = outcome.plan === 'active' ? '今月' : 'お試し'
         setAiUsage((u) => (u ? { ...u, used: u.limit, remaining: 0 } : u))
-        setRuleFeedback(
-          `⚠ AIの利用回数（${planLabel}の上限${outcome.limit}回）に達しました。${
-            outcome.plan === 'active' ? '翌月にリセットされます。' : '上の「項目から追加」は無制限でご利用いただけます。'
-          }`,
-        )
+        if (outcome.tier === 'free') {
+          setRuleFeedback('⚠ AI解釈は有料プランでご利用いただけます。「項目から追加」は無料で使えます。')
+        } else {
+          const label = outcome.tier === 'active' ? '今月' : 'お試し'
+          setRuleFeedback(
+            `⚠ AIの利用回数（${label}の上限${outcome.limit}回）に達しました。${
+              outcome.tier === 'active'
+                ? '翌月にリセットされます。'
+                : '「項目から追加」は無制限でご利用いただけます。'
+            }`,
+          )
+        }
         return
       }
       const msg =
@@ -199,7 +211,7 @@ export default function ConstraintsTab() {
     })
     if (typeof outcome.remaining === 'number' && typeof outcome.limit === 'number') {
       setAiUsage((u) => ({
-        plan: u?.plan ?? 'trial',
+        tier: u?.tier ?? 'trialing',
         limit: outcome.limit!,
         used: outcome.limit! - outcome.remaining!,
         remaining: outcome.remaining!,
@@ -549,25 +561,39 @@ export default function ConstraintsTab() {
             <button
               className="btn-ghost btn-sm"
               onClick={addWithAi}
-              disabled={aiBusy || !ruleText.trim() || (aiUsage != null && aiUsage.remaining <= 0)}
+              disabled={aiBusy || !ruleText.trim() || aiLocked || (aiUsage != null && aiUsage.remaining <= 0)}
             >
               {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
             </button>
-            {aiUsage && (
-              <span
-                className={`text-sm ${aiUsage.remaining <= 0 ? 'font-semibold text-red-600' : 'text-slate-500'}`}
-                title={
-                  aiUsage.plan === 'active'
-                    ? '月額プランは毎月30回まで（翌月にリセット）'
-                    : 'お試しは累計5回まで'
-                }
-              >
-                AI残り {aiUsage.remaining}/{aiUsage.limit} 回
-                {aiUsage.plan === 'active' ? '（今月）' : '（お試し）'}
+            {aiLocked ? (
+              <span className="flex items-center gap-2 text-sm">
+                <span className="font-semibold text-amber-700">🔒 AI解釈は有料プランで</span>
+                <button className="btn-primary btn-sm" onClick={() => setBillingOpen(true)}>
+                  プランを見る
+                </button>
               </span>
+            ) : (
+              aiUsage && (
+                <span
+                  className={`text-sm ${aiUsage.remaining <= 0 ? 'font-semibold text-red-600' : 'text-slate-500'}`}
+                  title={
+                    aiUsage.tier === 'active'
+                      ? '月額プランは毎月30回まで（翌月にリセット）'
+                      : 'お試しは累計5回まで'
+                  }
+                >
+                  AI残り {aiUsage.remaining}/{aiUsage.limit} 回
+                  {aiUsage.tier === 'active' ? '（今月）' : '（お試し）'}
+                </span>
+              )
             )}
           </div>
         </div>
+        <BillingModal
+          open={billingOpen}
+          onClose={() => setBillingOpen(false)}
+          billingConfigured={ent.billingConfigured}
+        />
 
         {ruleFeedback && <p className="text-sm font-medium text-slate-600">{ruleFeedback}</p>}
         <div className="space-y-1.5">

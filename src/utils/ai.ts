@@ -47,7 +47,7 @@ export type AiParseOutcome =
   | { ok: true; result: AiParseResponse; remaining?: number; limit?: number }
   /** kind: not_configured=キー未設定 / unauthorized=未ログイン / limit=回数上限 / failed=通信/実行エラー */
   | { ok: false; kind: 'not_configured' | 'unauthorized' | 'failed' }
-  | { ok: false; kind: 'limit'; plan: string; limit: number }
+  | { ok: false; kind: 'limit'; tier: string; limit: number }
 
 /** 自由文条件をAIで解釈して1つの構造化ルール（または null）を得る */
 export async function aiParseRule(
@@ -71,9 +71,9 @@ export async function aiParseRule(
     if (res.status === 401) return { ok: false, kind: 'unauthorized' }
     if (res.status === 429) {
       const body = (await res.json().catch(() => null)) as
-        | { plan?: string; limit?: number }
+        | { tier?: string; limit?: number }
         | null
-      return { ok: false, kind: 'limit', plan: body?.plan ?? 'trial', limit: body?.limit ?? 0 }
+      return { ok: false, kind: 'limit', tier: body?.tier ?? 'trialing', limit: body?.limit ?? 0 }
     }
     if (!res.ok) {
       return { ok: false, kind: 'failed' }

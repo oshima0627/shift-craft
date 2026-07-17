@@ -8,6 +8,7 @@ import RequirementsTab from './components/RequirementsTab'
 import ConstraintsTab from './components/ConstraintsTab'
 import GenerateTab from './components/GenerateTab'
 import DataMenu from './components/DataMenu'
+import PlanBanner from './components/PlanBanner'
 
 type TabId =
   | 'busyness'
@@ -145,6 +146,9 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
       </div>
 
       <main className={`mx-auto ${containerW} px-3 py-6 sm:px-5`}>
+        <div className="mb-4">
+          <PlanBanner />
+        </div>
         {tab === 'busyness' && <BusynessCalendar />}
         {tab === 'roles' && <RolesTab />}
         {tab === 'shifts' && <ShiftsTab />}
