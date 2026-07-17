@@ -24,11 +24,15 @@ export function newId(prefix: string): string {
 function defaultConstraints(): Constraints {
   return {
     incompatiblePairs: [],
+    // NGペアは既定で厳守（オフにすると警告のみ）
+    incompatibleHard: true,
+    // 定休日（毎週の休業曜日）。既定は無し
+    closedWeekdays: [],
     minExperiencedPerShift: 1,
     // 労基法35条（週1休）→ 原則6連勤まで
     maxConsecutiveDefault: 6,
     // 勤務間インターバル: 努力義務。厚労省ガイドラインの目安 9〜11h
-    restIntervalHours: 11,
+    restIntervalHours: 9,
     restIntervalHard: false,
     // 法定労働時間 40h（常時10人未満の商業・サービス業は特例で44h）
     weeklyHoursCap: 40,
@@ -54,16 +58,11 @@ function defaultCost(): CostSettings {
 function defaultData(): AppData {
   const r1: Role = { id: 'role_hall', name: 'ホール', color: '#3b6fe0' }
   const r2: Role = { id: 'role_kitchen', name: 'キッチン', color: '#e0733b' }
-  const s1: ShiftType = { id: 'shift_early', name: '早番', start: '09:00', end: '17:00' }
-  const s2: ShiftType = { id: 'shift_late', name: '遅番', start: '13:00', end: '22:00' }
+  const s1: ShiftType = { id: 'shift_early', name: '早番', start: '10:00', end: '14:00' }
+  const s2: ShiftType = { id: 'shift_late', name: '遅番', start: '17:00', end: '21:00' }
 
-  const staff: Staff[] = [
-    mkStaff('田中', ['role_hall'], 2, { hourlyWage: 1300 }),
-    mkStaff('鈴木', ['role_hall', 'role_kitchen'], 1, { hourlyWage: 1150 }),
-    mkStaff('佐藤', ['role_kitchen'], 2, { hourlyWage: 1350 }),
-    mkStaff('高橋', ['role_hall'], 0, { hourlyWage: 1050, isMinor: true }),
-    mkStaff('伊藤', ['role_kitchen'], 0, { hourlyWage: 1100 }),
-  ]
+  // 既定ではスタッフ未登録（利用者が自分の店舗に合わせて追加する）
+  const staff: Staff[] = []
 
   // 忙しさ段階（低→高）。既定は3段階
   const levels = defaultBusynessLevels()
@@ -103,7 +102,7 @@ function defaultBusynessLevels(): BusynessLevel[] {
 function defaultLeaveTypes(): LeaveType[] {
   return [
     { id: 'leave_full', name: '全休', start: '00:00', end: '24:00' },
-    { id: 'leave_am', name: '午前休', start: '09:00', end: '15:00' },
+    { id: 'leave_am', name: '午前休', start: '10:00', end: '14:00' },
     { id: 'leave_pm', name: '午後休', start: '17:00', end: '21:00' },
   ]
 }
@@ -203,31 +202,6 @@ function sampleData(): AppData {
     constraints: defaultConstraints(),
     cost: defaultCost(),
     period,
-  }
-}
-
-let staffSeq = 0
-function mkStaff(
-  name: string,
-  roleIds: string[],
-  level: 0 | 1 | 2,
-  extra: Partial<Staff> = {},
-): Staff {
-  staffSeq++
-  return {
-    id: `staff_seed_${staffSeq}`,
-    name,
-    roleIds,
-    level,
-    hourlyWage: 1100,
-    isMinor: false,
-    maxShifts: null,
-    maxConsecutive: 5,
-    weeklyMaxHours: null,
-    weeklyMaxDays: null,
-    leaves: [],
-    allowedShiftIds: [],
-    ...extra,
   }
 }
 

@@ -355,7 +355,7 @@ function normalizeUsername(v: unknown): string {
  */
 const AI_MODELS = ['claude-sonnet-5', 'claude-opus-4-8'] as const
 type AiModel = (typeof AI_MODELS)[number]
-const DEFAULT_AI_MODEL: AiModel = 'claude-opus-4-8'
+const DEFAULT_AI_MODEL: AiModel = 'claude-sonnet-5'
 
 function normalizeModel(v: unknown): AiModel {
   return AI_MODELS.includes(v as AiModel) ? (v as AiModel) : DEFAULT_AI_MODEL

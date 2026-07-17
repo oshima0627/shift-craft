@@ -27,7 +27,7 @@ const TABS: { id: TabId; label: string; path: string }[] = [
   { id: 'staff', label: 'スタッフ', path: '/staff' },
   { id: 'busyness', label: '忙しさ', path: '/busyness' },
   { id: 'requirements', label: '必要人数', path: '/requirements' },
-  { id: 'dayoff', label: '希望休', path: '/dayoff' },
+  { id: 'dayoff', label: '休み', path: '/dayoff' },
   { id: 'constraints', label: '条件', path: '/constraints' },
   { id: 'generate', label: 'シフト生成', path: '/generate' },
 ]

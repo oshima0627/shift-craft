@@ -3,6 +3,8 @@ import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
 import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
 
+const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土']
+
 export default function ConstraintsTab() {
   const staff = useStore((s) => s.data.staff)
   const shifts = useStore((s) => s.data.shifts)
@@ -175,22 +177,40 @@ export default function ConstraintsTab() {
               </span>
             </label>
           </div>
-          {constraints.allowSplitShifts && (
-            <div className="flex items-start sm:col-span-2 sm:pl-6">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-                <input
-                  type="checkbox"
-                  className="h-5 w-5 accent-brand-500"
-                  checked={constraints.preferSplitShifts}
-                  onChange={(e) => updateConstraints({ preferSplitShifts: e.target.checked })}
-                />
-                分割勤務を積極的に使う（少人数で回す）
-                <span className="text-sm text-slate-400">
-                  — ONにすると、人手に余裕があっても同じ人に早番＋遅番を優先的に割り当てます
-                </span>
-              </label>
-            </div>
-          )}
+        </div>
+      </div>
+
+      {/* 定休日 */}
+      <div className="card space-y-3">
+        <div className="space-y-1">
+          <h3 className="section-title">定休日（毎週の休業日）</h3>
+          <p className="section-desc">
+            チェックした曜日はお店が休みとして、誰も割り当てません（人数不足の警告も出ません）。
+            特定日だけ営業したい場合は「必要人数」タブの「特定日の人数上書き」で個別に指定できます。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {WEEKDAY_LABELS.map((label, wd) => {
+            const on = (constraints.closedWeekdays ?? []).includes(wd)
+            return (
+              <button
+                key={wd}
+                onClick={() => {
+                  const cur = constraints.closedWeekdays ?? []
+                  updateConstraints({
+                    closedWeekdays: on ? cur.filter((d) => d !== wd) : [...cur, wd].sort(),
+                  })
+                }}
+                className={`min-h-[2.75rem] min-w-[3rem] rounded-xl border px-3 text-base font-semibold transition-colors ${
+                  on
+                    ? 'border-brand-500 bg-brand-500 text-white shadow-sm'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:bg-brand-50'
+                } ${wd === 0 ? 'text-red-500' : ''} ${on && wd === 0 ? '!text-white' : ''}`}
+              >
+                {label}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -201,9 +221,18 @@ export default function ConstraintsTab() {
             同じ日に出勤させない（NGペア）
           </h3>
           <p className="section-desc">
-            指定した2人は同じ日に一緒のシフトに入りません（ハード制約）。
+            指定した2人を同じ日に一緒のシフトに入れないようにします。
           </p>
         </div>
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            className="h-5 w-5 accent-brand-500"
+            checked={constraints.incompatibleHard ?? true}
+            onChange={(e) => updateConstraints({ incompatibleHard: e.target.checked })}
+          />
+          厳守する（オフ=なるべく避ける警告のみ／オン=絶対に同じ日にしない）
+        </label>
         <div className="flex flex-wrap items-center gap-2">
           <select className="input max-w-[10rem]" value={pairA} onChange={(e) => setPairA(e.target.value)}>
             <option value="">スタッフを選択</option>
@@ -336,8 +365,22 @@ export default function ConstraintsTab() {
             </div>
           ))}
           {constraints.customRules.length === 0 && (
-            <span className="text-sm text-slate-400">カスタム条件はありません。</span>
+            <span className="text-sm text-slate-400">追加した条件はありません。</span>
           )}
+        </div>
+
+        {/* 自動変換できない条件のメモ（生成結果に一緒に表示） */}
+        <div className="space-y-1.5 border-t border-slate-100 pt-3">
+          <label className="label">自由メモ（ルールにできない条件の覚え書き）</label>
+          <p className="section-desc">
+            自動で変換できない条件を書き留めておけます。生成結果と一緒に表示され、手動調整の参考になります。
+          </p>
+          <textarea
+            className="input min-h-[4.5rem]"
+            placeholder="例: 月初はベテランを多めに。〇〇さんは金曜に固定希望。"
+            value={constraints.notes}
+            onChange={(e) => updateConstraints({ notes: e.target.value })}
+          />
         </div>
       </div>
 
@@ -372,19 +415,6 @@ export default function ConstraintsTab() {
         </div>
       </div>
 
-      {/* メモ */}
-      <div className="card space-y-2">
-        <h3 className="section-title">その他の条件メモ</h3>
-        <p className="section-desc">
-          自動化しきれない条件を書き留めておけます（生成結果と一緒に表示され、手動調整の参考になります）。
-        </p>
-        <textarea
-          className="input min-h-[5rem]"
-          placeholder="例: 月初はベテランを多めに。〇〇さんは金曜に固定希望。"
-          value={constraints.notes}
-          onChange={(e) => updateConstraints({ notes: e.target.value })}
-        />
-      </div>
     </div>
   )
 }

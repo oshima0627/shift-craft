@@ -20,6 +20,9 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
   const shiftById = new Map(data.shifts.map((s) => [s.id, s]))
   const [editing, setEditing] = useState<{ staffId: string; date: string } | null>(null)
 
+  const closedSet = new Set(data.constraints.closedWeekdays ?? [])
+  const isClosed = (date: string) => closedSet.has(new Date(date + 'T00:00:00').getDay())
+
   const cellsOf = (staffId: string, date: string): Assignment[] =>
     result.assignments.filter((a) => a.staffId === staffId && a.date === date)
 
@@ -39,19 +42,22 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
             {dates.map((date) => {
               const rest = isRestDay(date)
               const cat = dayCategoryOf(date)
+              const closed = isClosed(date)
               return (
                 <th
                   key={date}
                   className={`border-b border-slate-200 px-1 py-1 text-center font-semibold ${
-                    cat === 'holiday' || cat === 'sunday'
-                      ? 'text-red-500'
-                      : cat === 'saturday'
-                        ? 'text-blue-500'
-                        : 'text-slate-500'
-                  } ${rest ? 'bg-slate-50' : ''}`}
+                    closed
+                      ? 'text-slate-400'
+                      : cat === 'holiday' || cat === 'sunday'
+                        ? 'text-red-500'
+                        : cat === 'saturday'
+                          ? 'text-blue-500'
+                          : 'text-slate-500'
+                  } ${closed ? 'bg-slate-100' : rest ? 'bg-slate-50' : ''}`}
                 >
                   <div>{parse(date).getDate()}</div>
-                  <div className="text-[10px] font-normal">{weekdayLabel(date)}</div>
+                  <div className="text-[10px] font-normal">{closed ? '休業' : weekdayLabel(date)}</div>
                 </th>
               )
             })}
@@ -88,12 +94,13 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
                   : undefined
                 const unavailable = !!leave
                 const rest = isRestDay(date)
+                const closed = isClosed(date)
                 return (
                   <td
                     key={date}
                     onClick={() => setEditing({ staffId: st.id, date })}
                     className={`h-10 min-w-[2.75rem] cursor-pointer border-b border-l border-slate-100 p-0.5 text-center align-middle ${
-                      rest ? 'bg-slate-50/60' : ''
+                      closed ? 'bg-slate-100' : rest ? 'bg-slate-50/60' : ''
                     } ${unavailable && cells.length === 0 ? 'bg-red-50' : ''} hover:ring-2 hover:ring-brand-400`}
                     title={
                       cells.length > 0
@@ -104,7 +111,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
                             )
                             .join('、')
                         : unavailable
-                          ? `希望休（${leaveName ?? ''}）`
+                          ? `休み（${leaveName ?? ''}）`
                           : 'クリックで割り当て'
                     }
                   >

@@ -253,9 +253,9 @@ function StaffRow({ staff }: { staff: Staff }) {
           </div>
 
           <div className="sm:col-span-2">
-            <label className="label">希望休（全休・時間休）</label>
+            <label className="label">休み（全休・時間休）</label>
             <p className="text-xs text-slate-500">
-              希望休は「希望休」タブのカレンダーで登録します（全休・午前休・午後休など）。
+              休みは「休み」タブのカレンダーで登録します（全休・午前休・午後休など）。
               現在の登録数: {staff.leaves.length}件
             </p>
           </div>
