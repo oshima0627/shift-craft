@@ -177,14 +177,14 @@ export default function BusynessCalendar() {
               return (
                 <div
                   key={date}
-                  className="flex h-20 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-base font-medium"
+                  className="flex h-20 flex-col items-center justify-center rounded-lg border border-slate-300 bg-slate-300 text-base font-medium"
                   title="定休日（毎週の休業日）"
                 >
-                  <span className="text-base font-semibold text-slate-400">
+                  <span className="text-base font-semibold text-slate-600">
                     {day}
-                    {holiday && <span className="ml-0.5 text-[11px] text-red-400">祝</span>}
+                    {holiday && <span className="ml-0.5 text-[11px] text-red-500">祝</span>}
                   </span>
-                  <span className="mt-0.5 rounded bg-slate-400 px-1.5 text-[11px] font-semibold text-white">
+                  <span className="mt-0.5 rounded bg-slate-600 px-1.5 text-[11px] font-semibold text-white">
                     定休日
                   </span>
                 </div>
