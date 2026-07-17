@@ -545,6 +545,33 @@ describe('定休日（closedWeekdays）', () => {
     expect(closedDates).toHaveLength(0)
     expect(res.unfilled).toHaveLength(0)
   })
+
+  it('特定日の臨時休業（closedDates）にはその日だけ割り当てない', () => {
+    const data = baseData({
+      staff: [staff('a'), staff('b')],
+      constraints: baseConstraints({ closedDates: ['2026-08-03'] }),
+    })
+    const res = generateSchedule(data)
+    expect(res.assignments.some((a) => a.date === '2026-08-03')).toBe(false)
+    // 他の日は通常どおり割り当てられる
+    expect(res.assignments.some((a) => a.date === '2026-08-02')).toBe(true)
+    expect(res.unfilled).toHaveLength(0)
+  })
+
+  it('特定日の臨時営業（openDates）は定休曜日でもその日だけ営業する', () => {
+    const wd = new Date('2026-08-03T00:00:00').getDay()
+    const data = baseData({
+      staff: [staff('a'), staff('b')],
+      period: { start: '2026-08-01', end: '2026-08-14', holidays: [] },
+      // その曜日は定休だが、8/3 だけは臨時営業にする
+      constraints: baseConstraints({ closedWeekdays: [wd], openDates: ['2026-08-03'] }),
+    })
+    const res = generateSchedule(data)
+    // 8/3 は営業（割り当てあり）
+    expect(res.assignments.some((a) => a.date === '2026-08-03')).toBe(true)
+    // 同じ曜日の別の日（8/10）は定休のまま
+    expect(res.assignments.some((a) => a.date === '2026-08-10')).toBe(false)
+  })
 })
 
 describe('NGペアの厳守/警告', () => {

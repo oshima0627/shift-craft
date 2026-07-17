@@ -13,6 +13,7 @@ import type {
   ShiftType,
   Staff,
 } from '../types'
+import { positionalWeekdayLevel, positionalWeekendLevel } from '../utils/busyness'
 
 let idCounter = 0
 /** 決定論を保つため Date/Math.random は使わずカウンタでID生成 */
@@ -28,6 +29,9 @@ function defaultConstraints(): Constraints {
     incompatibleHard: true,
     // 定休日（毎週の休業曜日）。既定は無し
     closedWeekdays: [],
+    // 特定日の休業／営業。既定は無し
+    closedDates: [],
+    openDates: [],
     minExperiencedPerShift: 1,
     // 労基法35条（週1休）→ 原則6連勤まで
     maxConsecutiveDefault: 6,
@@ -83,6 +87,9 @@ function defaultData(): AppData {
     leaveTypes: defaultLeaveTypes(),
     busynessLevels: levels,
     dayBusyness: {},
+    // 既定の忙しさは段階IDで固定（段階を追加・削除しても他の日はずれない）
+    defaultWeekdayLevel: 'busy_mid',
+    defaultWeekendLevel: 'busy_high',
     requirements,
     overrides: [],
     constraints: defaultConstraints(),
@@ -197,6 +204,9 @@ function sampleData(): AppData {
     leaveTypes: defaultLeaveTypes(),
     busynessLevels: levels,
     dayBusyness: {},
+    // 既定の忙しさは段階IDで固定（段階を追加・削除しても他の日はずれない）
+    defaultWeekdayLevel: 'busy_mid',
+    defaultWeekendLevel: 'busy_high',
     requirements,
     overrides: [],
     constraints: defaultConstraints(),
@@ -259,6 +269,17 @@ export function normalizeData(raw: unknown): AppData {
     migrateRequirementCounts(r, busynessLevels),
   )
 
+  // 既定の忙しさ段階。保存値が有効ならそのまま、無ければ段階の並びから補完。
+  // 段階IDで固定することで、段階の追加・削除があっても他の日の判定がずれない。
+  const hasLevel = (id: string | undefined): id is string =>
+    !!id && busynessLevels.some((l) => l.id === id)
+  const defaultWeekdayLevel = hasLevel(d.defaultWeekdayLevel)
+    ? d.defaultWeekdayLevel
+    : positionalWeekdayLevel(busynessLevels)
+  const defaultWeekendLevel = hasLevel(d.defaultWeekendLevel)
+    ? d.defaultWeekendLevel
+    : positionalWeekendLevel(busynessLevels)
+
   return {
     roles: d.roles ?? base.roles,
     shifts: d.shifts ?? base.shifts,
@@ -266,6 +287,8 @@ export function normalizeData(raw: unknown): AppData {
     leaveTypes,
     busynessLevels,
     dayBusyness: d.dayBusyness ?? {},
+    defaultWeekdayLevel,
+    defaultWeekendLevel,
     requirements,
     overrides: d.overrides ?? [],
     constraints,
@@ -325,6 +348,7 @@ interface StoreState {
   updateBusynessLevel: (id: string, patch: Partial<BusynessLevel>) => void
   removeBusynessLevel: (id: string) => void
   setDayBusyness: (date: string, levelId: string) => void
+  clearDayBusyness: (date: string) => void
   // --- Requirement ---
   setRequirement: (roleId: string, shiftId: string, counts: Requirement['counts']) => void
   // --- 特定日の上書き ---
@@ -496,7 +520,24 @@ export const useStore = create<StoreState>()(
             name: `段階${s.data.busynessLevels.length + 1}`,
             color,
           }
-          return { data: { ...s.data, busynessLevels: [...s.data.busynessLevels, level] } }
+          // 追加前に既定段階をIDで固定しておく（追加により他の日の自動判定がずれないように）。
+          // 追加した段階は既定にはならないので、既存の日の忙しさは一切変わらない。
+          const has = (id: string | undefined) =>
+            !!id && s.data.busynessLevels.some((l) => l.id === id)
+          const defaultWeekdayLevel = has(s.data.defaultWeekdayLevel)
+            ? s.data.defaultWeekdayLevel
+            : positionalWeekdayLevel(s.data.busynessLevels)
+          const defaultWeekendLevel = has(s.data.defaultWeekendLevel)
+            ? s.data.defaultWeekendLevel
+            : positionalWeekendLevel(s.data.busynessLevels)
+          return {
+            data: {
+              ...s.data,
+              busynessLevels: [...s.data.busynessLevels, level],
+              defaultWeekdayLevel,
+              defaultWeekendLevel,
+            },
+          }
         }),
       updateBusynessLevel: (id, patch) =>
         set((s) => ({
@@ -509,10 +550,19 @@ export const useStore = create<StoreState>()(
         set((s) => {
           if (s.data.busynessLevels.length <= 1) return s // 最低1段階は残す
           const levels = s.data.busynessLevels.filter((l) => l.id !== id)
-          // 削除段階を指す日付・必要人数の該当キーを掃除
+          const valid = (lid: string | undefined) => !!lid && levels.some((l) => l.id === lid)
+          // 既定段階を固定し直す。削除された段階を指していた既定は並びから補完。
+          const defaultWeekdayLevel = valid(s.data.defaultWeekdayLevel)
+            ? (s.data.defaultWeekdayLevel as string)
+            : positionalWeekdayLevel(levels)
+          const defaultWeekendLevel = valid(s.data.defaultWeekendLevel)
+            ? (s.data.defaultWeekendLevel as string)
+            : positionalWeekendLevel(levels)
+          // 削除段階を設定していた日は「普通（平日の既定段階）」に付け替える
+          const normalLevel = defaultWeekdayLevel
           const dayBusyness: Record<string, string> = {}
           for (const [date, lid] of Object.entries(s.data.dayBusyness)) {
-            if (lid !== id) dayBusyness[date] = lid
+            dayBusyness[date] = lid === id ? normalLevel : lid
           }
           const requirements = s.data.requirements.map((r) => {
             const counts = { ...r.counts }
@@ -520,13 +570,25 @@ export const useStore = create<StoreState>()(
             return { ...r, counts }
           })
           return {
-            data: { ...s.data, busynessLevels: levels, dayBusyness, requirements },
+            data: {
+              ...s.data,
+              busynessLevels: levels,
+              dayBusyness,
+              defaultWeekdayLevel,
+              defaultWeekendLevel,
+              requirements,
+            },
           }
         }),
       setDayBusyness: (date, levelId) =>
         set((s) => ({
           data: { ...s.data, dayBusyness: { ...s.data.dayBusyness, [date]: levelId } },
         })),
+      clearDayBusyness: (date) =>
+        set((s) => {
+          const { [date]: _omit, ...rest } = s.data.dayBusyness
+          return { data: { ...s.data, dayBusyness: rest } }
+        }),
 
       setRequirement: (roleId, shiftId, counts) =>
         set((s) => {
@@ -575,7 +637,7 @@ export const useStore = create<StoreState>()(
     }),
     {
       name: 'shiftcraft-data-v1',
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const state = persisted as { data?: unknown }
         return { data: normalizeData(state?.data) }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AppData, Assignment, ScheduleResult } from '../types'
 import { dayCategoryOf, enumerateDates, isRestDay, parse, weekdayLabel } from '../utils/date'
 import { busynessOf } from '../utils/busyness'
+import { isClosedDay } from '../utils/requirements'
 
 interface Props {
   data: AppData
@@ -20,8 +21,8 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
   const shiftById = new Map(data.shifts.map((s) => [s.id, s]))
   const [editing, setEditing] = useState<{ staffId: string; date: string } | null>(null)
 
-  const closedSet = new Set(data.constraints.closedWeekdays ?? [])
-  const isClosed = (date: string) => closedSet.has(new Date(date + 'T00:00:00').getDay())
+  // 休業日（毎週の定休日＋特定日の臨時休業／臨時営業）を共通ロジックで判定
+  const isClosed = (date: string) => isClosedDay(data, date)
 
   const cellsOf = (staffId: string, date: string): Assignment[] =>
     result.assignments.filter((a) => a.staffId === staffId && a.date === date)
