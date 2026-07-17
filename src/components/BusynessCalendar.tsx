@@ -33,7 +33,6 @@ export default function BusynessCalendar() {
   const constraints = useStore((s) => s.data.constraints)
   const updatePeriod = useStore((s) => s.updatePeriod)
   const setDayBusyness = useStore((s) => s.setDayBusyness)
-  const clearDayBusyness = useStore((s) => s.clearDayBusyness)
   const addBusynessLevel = useStore((s) => s.addBusynessLevel)
   const updateBusynessLevel = useStore((s) => s.updateBusynessLevel)
   const removeBusynessLevel = useStore((s) => s.removeBusynessLevel)
@@ -318,15 +317,6 @@ export default function BusynessCalendar() {
                         {l.name}
                       </button>
                     ))}
-                    <button
-                      className="min-h-[2.5rem] rounded-xl border border-slate-200 bg-white px-3 text-base font-semibold text-slate-600 hover:border-brand-300 hover:bg-brand-50"
-                      onClick={() => {
-                        clearDayBusyness(menuDate)
-                        setMenuDate(null)
-                      }}
-                    >
-                      自動
-                    </button>
                   </div>
                 </div>
                 <button
