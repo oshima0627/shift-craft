@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { handleApi, type D1Database, type D1PreparedStatement } from './index'
+import { handleApi, evaluateAiUse, AI_LIMITS, type D1Database, type D1PreparedStatement } from './index'
 
 /**
  * D1 のインメモリ・フェイク。worker/index.ts が発行する固定SQLパターンのみ解釈する。
@@ -318,5 +318,61 @@ describe('worker /api/settings（要ログイン）', () => {
     const res = await handleApi(req('/api/history', 'GET', undefined, cookie), db)
     const body = (await res.json()) as { history: { id: number; saved_at: string }[] }
     expect(body.history).toHaveLength(2)
+  })
+})
+
+describe('AI利用回数の上限（evaluateAiUse）', () => {
+  const MONTH = '2026-07'
+
+  it('trial は累計5回まで（リセットなし）', () => {
+    expect(AI_LIMITS.trial).toBe(5)
+    // 未使用
+    let u = evaluateAiUse('trial', 0, 'trial', MONTH)
+    expect(u.limit).toBe(5)
+    expect(u.allowed).toBe(true)
+    expect(u.remaining).toBe(5)
+    expect(u.period).toBe('trial')
+    // 4回使用済み → あと1回可
+    u = evaluateAiUse('trial', 4, 'trial', MONTH)
+    expect(u.allowed).toBe(true)
+    expect(u.remaining).toBe(1)
+    // 5回使用済み → 上限到達
+    u = evaluateAiUse('trial', 5, 'trial', MONTH)
+    expect(u.allowed).toBe(false)
+    expect(u.remaining).toBe(0)
+  })
+
+  it('active は毎月30回まで', () => {
+    expect(AI_LIMITS.active).toBe(30)
+    const u = evaluateAiUse('active', 29, MONTH, MONTH)
+    expect(u.limit).toBe(30)
+    expect(u.allowed).toBe(true)
+    expect(u.remaining).toBe(1)
+    const full = evaluateAiUse('active', 30, MONTH, MONTH)
+    expect(full.allowed).toBe(false)
+  })
+
+  it('active は月が変わるとカウントが0にリセットされる', () => {
+    // 先月30回使い切っていても、今月分は0からで使える
+    const u = evaluateAiUse('active', 30, '2026-06', '2026-07')
+    expect(u.used).toBe(0)
+    expect(u.allowed).toBe(true)
+    expect(u.remaining).toBe(30)
+    expect(u.period).toBe('2026-07')
+  })
+
+  it('trial はプランを active にすると上限が30/月に上がる', () => {
+    // 同じ「5回使用済み」でも、trial なら打ち止め、active なら継続可
+    expect(evaluateAiUse('trial', 5, 'trial', MONTH).allowed).toBe(false)
+    // active に移行後は period が月キーに変わるため used は0扱い（新プランの初月）
+    const upgraded = evaluateAiUse('active', 5, 'trial', MONTH)
+    expect(upgraded.used).toBe(0)
+    expect(upgraded.allowed).toBe(true)
+  })
+
+  it('未知のプランは trial 扱い（安全側）', () => {
+    const u = evaluateAiUse(undefined, 0, '', MONTH)
+    expect(u.plan).toBe('trial')
+    expect(u.limit).toBe(5)
   })
 })

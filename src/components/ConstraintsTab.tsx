@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
 import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
+import { getAuthStatus, type AiUsage } from '../utils/cloud'
 import type { ParsedRule } from '../types'
 
 type RuleKind = ParsedRule['kind']
@@ -36,6 +37,13 @@ export default function ConstraintsTab() {
   const [ruleFeedback, setRuleFeedback] = useState<string | null>(null)
   const [aiModel, setAiModel] = useState<string>(() => getSelectedModel())
   const [aiBusy, setAiBusy] = useState(false)
+  const [aiUsage, setAiUsage] = useState<AiUsage | null>(null)
+  // 起動時にAI利用状況（残り回数）を取得
+  useEffect(() => {
+    void getAuthStatus().then((s) => {
+      if (s.backend && s.aiUsage) setAiUsage(s.aiUsage)
+    })
+  }, [])
   // 項目から追加（かんたん）フォームの状態
   const [rKind, setRKind] = useState<RuleKind>('pairAvoid')
   const [rStaffA, setRStaffA] = useState('')
@@ -165,6 +173,16 @@ export default function ConstraintsTab() {
     const outcome = await aiParseRule(text, staff, shifts, aiModel)
     setAiBusy(false)
     if (!outcome.ok) {
+      if (outcome.kind === 'limit') {
+        const planLabel = outcome.plan === 'active' ? '今月' : 'お試し'
+        setAiUsage((u) => (u ? { ...u, used: u.limit, remaining: 0 } : u))
+        setRuleFeedback(
+          `⚠ AIの利用回数（${planLabel}の上限${outcome.limit}回）に達しました。${
+            outcome.plan === 'active' ? '翌月にリセットされます。' : '上の「項目から追加」は無制限でご利用いただけます。'
+          }`,
+        )
+        return
+      }
       const msg =
         outcome.kind === 'not_configured'
           ? 'AI解釈は利用できません（サーバーにAPIキーが未設定です）。'
@@ -178,6 +196,14 @@ export default function ConstraintsTab() {
     updateConstraints({
       customRules: [...constraints.customRules, { id: newId('rule'), text, parsed }],
     })
+    if (typeof outcome.remaining === 'number' && typeof outcome.limit === 'number') {
+      setAiUsage((u) => ({
+        plan: u?.plan ?? 'trial',
+        limit: outcome.limit!,
+        used: outcome.limit! - outcome.remaining!,
+        remaining: outcome.remaining!,
+      }))
+    }
     const modelLabel = AI_MODELS.find((m) => m.id === aiModel)?.label ?? aiModel
     setRuleFeedback(parsed ? `AI解釈（${modelLabel}）: ${description}` : `AI（未解釈）: ${description}`)
     setRuleText('')
@@ -515,9 +541,26 @@ export default function ConstraintsTab() {
                 </option>
               ))}
             </select>
-            <button className="btn-ghost btn-sm" onClick={addWithAi} disabled={aiBusy || !ruleText.trim()}>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={addWithAi}
+              disabled={aiBusy || !ruleText.trim() || (aiUsage != null && aiUsage.remaining <= 0)}
+            >
               {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
             </button>
+            {aiUsage && (
+              <span
+                className={`text-sm ${aiUsage.remaining <= 0 ? 'font-semibold text-red-600' : 'text-slate-500'}`}
+                title={
+                  aiUsage.plan === 'active'
+                    ? '月額プランは毎月30回まで（翌月にリセット）'
+                    : 'お試しは累計5回まで'
+                }
+              >
+                AI残り {aiUsage.remaining}/{aiUsage.limit} 回
+                {aiUsage.plan === 'active' ? '（今月）' : '（お試し）'}
+              </span>
+            )}
           </div>
         </div>
 

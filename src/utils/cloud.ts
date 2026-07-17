@@ -64,8 +64,22 @@ export function formatSyncTime(iso: string): string {
 
 // ===== 認証（アプリ内ログイン） =====
 
+/** AI利用状況（ログイン時のみ） */
+export interface AiUsage {
+  plan: string
+  limit: number
+  used: number
+  remaining: number
+}
+
 export type AuthStatus =
-  | { backend: true; configured: boolean; authenticated: boolean; username?: string }
+  | {
+      backend: true
+      configured: boolean
+      authenticated: boolean
+      username?: string
+      aiUsage?: AiUsage
+    }
   | { backend: false }
 
 /** 認証状態を取得。バックエンド未接続（ローカル開発等）なら backend:false */
@@ -78,13 +92,27 @@ export async function getAuthStatus(): Promise<AuthStatus> {
       configured?: boolean
       authenticated?: boolean
       username?: string
+      aiPlan?: string
+      aiLimit?: number
+      aiUsed?: number
+      aiRemaining?: number
     }
     if (typeof body.configured !== 'boolean') return { backend: false }
+    const aiUsage =
+      typeof body.aiLimit === 'number'
+        ? {
+            plan: body.aiPlan ?? 'trial',
+            limit: body.aiLimit,
+            used: body.aiUsed ?? 0,
+            remaining: body.aiRemaining ?? 0,
+          }
+        : undefined
     return {
       backend: true,
       configured: body.configured,
       authenticated: !!body.authenticated,
       username: body.username,
+      aiUsage,
     }
   } catch {
     return { backend: false }
