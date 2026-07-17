@@ -125,6 +125,10 @@ function AuthCard({
   withEmail,
   doneMessage,
   footer,
+  idType = 'text',
+  idPlaceholder = 'ID（ユーザー名）',
+  idNoun = 'ID',
+  emailAsId,
 }: {
   title: string
   desc: string
@@ -141,6 +145,14 @@ function AuthCard({
   doneMessage?: string
   /** カード下部に表示する補助リンク等 */
   footer?: React.ReactNode
+  /** 1つ目の入力欄の type（メールアドレスをIDにする場合は 'email'） */
+  idType?: 'text' | 'email'
+  /** 1つ目の入力欄のプレースホルダ */
+  idPlaceholder?: string
+  /** メッセージ内でIDを指す語（例: 'メールアドレス'） */
+  idNoun?: string
+  /** メールアドレスをそのままIDとして使う（連絡先メール欄を出さず、email=id で送信） */
+  emailAsId?: boolean
 }) {
   const [id, setId] = useState('')
   const [pw, setPw] = useState('')
@@ -155,7 +167,11 @@ function AuthCard({
   const submit = async () => {
     setError(null)
     if (id.trim().length < 1) {
-      setError('IDを入力してください。')
+      setError(`${idNoun}を入力してください。`)
+      return
+    }
+    if (emailAsId && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id.trim())) {
+      setError('正しいメールアドレスを入力してください。')
       return
     }
     if (pw.length < 4) {
@@ -167,7 +183,8 @@ function AuthCard({
       return
     }
     setBusy(true)
-    const res = await onSubmit(id.trim(), pw, email.trim())
+    // メールをIDにする場合は email も id と同じ値で送る
+    const res = await onSubmit(id.trim(), pw, emailAsId ? id.trim() : email.trim())
     setBusy(false)
     if (res.ok) {
       if (doneMessage) setDone(true)
@@ -175,15 +192,15 @@ function AuthCard({
     }
     setError(
       res.error === 'invalid_credentials'
-        ? 'IDまたはパスワードが違います。'
+        ? `${idNoun}またはパスワードが違います。`
         : res.error === 'pending_approval'
           ? 'このアカウントはまだ承認されていません。管理者の承認後にログインできます。'
           : res.error === 'username_taken'
-            ? 'そのIDは既に使われています。別のIDにしてください。'
+            ? `その${idNoun}は既に使われています。別の${idNoun}にしてください。`
             : res.error === 'weak_password'
               ? 'パスワードは4文字以上にしてください。'
               : res.error === 'invalid_username'
-                ? 'IDを入力してください。'
+                ? `${idNoun}を入力してください。`
                 : res.error === 'not_configured'
                   ? 'まだ管理者アカウントが作成されていないため申請できません。'
                   : 'エラーが発生しました。通信状況を確認してください。',
@@ -210,10 +227,10 @@ function AuthCard({
           <div className="space-y-3">
             <input
               ref={ref}
-              type="text"
-              autoComplete="username"
+              type={idType}
+              autoComplete={emailAsId ? 'email' : 'username'}
               className="input"
-              placeholder="ID（ユーザー名）"
+              placeholder={idPlaceholder}
               value={id}
               onChange={(e) => setId(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
@@ -283,8 +300,10 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
   return (
     <AuthCard
       title="ログイン"
-      desc="IDとパスワードを入力してください。"
+      desc="登録したメールアドレス（ID）とパスワードを入力してください。"
       buttonLabel="ログイン"
+      idPlaceholder="メールアドレス（ID）"
+      idNoun="メールアドレス"
       onSubmit={async (id, pw) => {
         const res = await apiLogin(id, pw)
         if (res.ok) await onDone()
@@ -312,11 +331,14 @@ function RegisterScreen() {
   return (
     <AuthCard
       title="新規登録の申請"
-      desc="希望するID（ユーザー名）とパスワードを入力して申請してください。管理者(oshima6.27@gmail.com)に確認メールが届き、承認されると、このID＋パスワードでログインできるようになります。"
+      desc="メールアドレス（これがログインIDになります）とパスワードを入力して申請してください。管理者に確認メールが届き、承認されると、このメールアドレス＋パスワードでログインできるようになります。"
       buttonLabel="この内容で申請する"
       confirm
-      withEmail
-      doneMessage="申請を受け付けました。管理者が承認すると、入力したID＋パスワードでログインできます。承認までしばらくお待ちください。"
+      emailAsId
+      idType="email"
+      idPlaceholder="メールアドレス"
+      idNoun="メールアドレス"
+      doneMessage="申請を受け付けました。管理者が承認すると、入力したメールアドレス＋パスワードでログインできます。承認までしばらくお待ちください。"
       onSubmit={async (id, pw, email) => requestAccess(id, pw, email)}
       footer={
         <p className="text-sm text-slate-500">
