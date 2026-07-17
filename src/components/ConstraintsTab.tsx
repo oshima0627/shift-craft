@@ -2,6 +2,28 @@ import { useState } from 'react'
 import { newId, useStore } from '../state/store'
 import { describeRule, parseRule } from '../utils/ruleParser'
 import { AI_MODELS, aiParseRule, getSelectedModel, setSelectedModel } from '../utils/ai'
+import type { ParsedRule } from '../types'
+
+type RuleKind = ParsedRule['kind']
+
+const WEEKDAY_OPTS = ['日', '月', '火', '水', '木', '金', '土']
+
+/** 項目から追加できる定型ルールの種類とUIに必要な入力欄 */
+interface RuleTypeMeta {
+  kind: RuleKind
+  label: string
+  needs: { a?: boolean; b?: boolean; weekday?: boolean; shift?: boolean; num?: 'week' | 'cons' }
+}
+const RULE_TYPE_META: RuleTypeMeta[] = [
+  { kind: 'pairAvoid', label: '同じ日に入れない（NGペア）', needs: { a: true, b: true } },
+  { kind: 'pairTogether', label: 'なるべく同じ日に入れる', needs: { a: true, b: true } },
+  { kind: 'forbidWeekday', label: '特定の曜日は休み', needs: { a: true, weekday: true } },
+  { kind: 'forbidShift', label: '特定のシフトに入れない', needs: { a: true, shift: true } },
+  { kind: 'onlyShift', label: '特定のシフトだけに入れる', needs: { a: true, shift: true } },
+  { kind: 'maxDaysPerWeek', label: '週N日まで', needs: { a: true, num: 'week' } },
+  { kind: 'maxConsecutive', label: 'N連勤まで', needs: { a: true, num: 'cons' } },
+  { kind: 'fixWeekdayShift', label: '特定の曜日はシフト固定', needs: { a: true, weekday: true, shift: true } },
+]
 
 export default function ConstraintsTab() {
   const staff = useStore((s) => s.data.staff)
@@ -14,8 +36,87 @@ export default function ConstraintsTab() {
   const [ruleFeedback, setRuleFeedback] = useState<string | null>(null)
   const [aiModel, setAiModel] = useState<string>(() => getSelectedModel())
   const [aiBusy, setAiBusy] = useState(false)
+  // 項目から追加（かんたん）フォームの状態
+  const [rKind, setRKind] = useState<RuleKind>('pairAvoid')
+  const [rStaffA, setRStaffA] = useState('')
+  const [rStaffB, setRStaffB] = useState('')
+  const [rWeekday, setRWeekday] = useState('') // '0'〜'6'
+  const [rShift, setRShift] = useState('')
+  const [rNum, setRNum] = useState('3')
 
   const nameOf = (id: string) => staff.find((s) => s.id === id)?.name ?? '(不明)'
+  const shiftNameOf = (id: string) => shifts.find((s) => s.id === id)?.name ?? '(不明)'
+
+  const ruleMeta = RULE_TYPE_META.find((m) => m.kind === rKind)!
+
+  /** ルールを自然文に（一覧の主行に表示する元テキストとして保存） */
+  const ruleSentence = (rule: ParsedRule): string => {
+    switch (rule.kind) {
+      case 'pairAvoid':
+        return `${nameOf(rule.a)}と${nameOf(rule.b)}は同じ日に入れない`
+      case 'pairTogether':
+        return `${nameOf(rule.a)}と${nameOf(rule.b)}はなるべく同じ日に`
+      case 'forbidWeekday':
+        return `${nameOf(rule.staffId)}は${WEEKDAY_OPTS[rule.weekday]}曜は休み`
+      case 'forbidShift':
+        return `${nameOf(rule.staffId)}は「${shiftNameOf(rule.shiftId)}」に入れない`
+      case 'onlyShift':
+        return `${nameOf(rule.staffId)}は「${shiftNameOf(rule.shiftId)}」のみ`
+      case 'maxDaysPerWeek':
+        return `${nameOf(rule.staffId)}は週${rule.days}日まで`
+      case 'maxConsecutive':
+        return `${nameOf(rule.staffId)}は${rule.days}連勤まで`
+      case 'fixWeekdayShift':
+        return `${nameOf(rule.staffId)}は${WEEKDAY_OPTS[rule.weekday]}曜は「${shiftNameOf(rule.shiftId)}」固定`
+    }
+  }
+
+  /** 項目フォームの選択内容から ParsedRule を直接生成して追加（パース不要＝確実） */
+  const addStructuredRule = () => {
+    const n = ruleMeta.needs
+    if (n.a && !rStaffA) return setRuleFeedback('スタッフを選択してください。')
+    if (n.b && (!rStaffB || rStaffB === rStaffA))
+      return setRuleFeedback('異なる2人のスタッフを選択してください。')
+    if (n.weekday && rWeekday === '') return setRuleFeedback('曜日を選択してください。')
+    if (n.shift && !rShift) return setRuleFeedback('シフトを選択してください。')
+
+    const num = Math.max(1, Number(rNum) || 1)
+    const wd = Number(rWeekday)
+    let parsed: ParsedRule
+    switch (rKind) {
+      case 'pairAvoid':
+        parsed = { kind: 'pairAvoid', a: rStaffA, b: rStaffB }
+        break
+      case 'pairTogether':
+        parsed = { kind: 'pairTogether', a: rStaffA, b: rStaffB }
+        break
+      case 'forbidWeekday':
+        parsed = { kind: 'forbidWeekday', staffId: rStaffA, weekday: wd }
+        break
+      case 'forbidShift':
+        parsed = { kind: 'forbidShift', staffId: rStaffA, shiftId: rShift }
+        break
+      case 'onlyShift':
+        parsed = { kind: 'onlyShift', staffId: rStaffA, shiftId: rShift }
+        break
+      case 'maxDaysPerWeek':
+        parsed = { kind: 'maxDaysPerWeek', staffId: rStaffA, days: num }
+        break
+      case 'maxConsecutive':
+        parsed = { kind: 'maxConsecutive', staffId: rStaffA, days: num }
+        break
+      case 'fixWeekdayShift':
+        parsed = { kind: 'fixWeekdayShift', staffId: rStaffA, weekday: wd, shiftId: rShift }
+        break
+      default:
+        return setRuleFeedback('未対応の条件です。')
+    }
+    updateConstraints({
+      customRules: [...constraints.customRules, { id: newId('rule'), text: ruleSentence(parsed), parsed }],
+    })
+    setRuleFeedback(`追加: ${describeRule(parsed, staff, shifts)}`)
+    setRStaffB('')
+  }
 
   const addPair = () => {
     if (!pairA || !pairB || pairA === pairB) return
@@ -254,51 +355,170 @@ export default function ConstraintsTab() {
         </div>
       </div>
 
-      {/* カスタム条件（自然文） */}
-      <div className="card space-y-3">
+      {/* その他の条件（項目選択＋文章＋AI） */}
+      <div className="card space-y-4">
         <div className="space-y-1">
-          <h3 className="section-title">その他の条件（文章で入力）</h3>
+          <h3 className="section-title">その他の条件</h3>
           <p className="section-desc">
-            文章で書くと自動でルールに変換します。例:
-            「田中と佐藤は同じ日に入れない」「高橋は火曜は休み」「伊藤は週3日まで」
-            「鈴木は遅番に入れない」「田中は金曜は早番固定」「佐藤は4連勤まで」
+            よくある条件は「項目から追加」で選ぶだけ。あてはまらないものは「文章で追加」でAIが読み取ります。
           </p>
         </div>
-        <div className="flex gap-2">
-          <input
-            className="input flex-1"
-            placeholder="例: 高橋は火曜は休み"
-            value={ruleText}
-            onChange={(e) => setRuleText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addCustomRule()}
-            disabled={aiBusy}
-          />
-          <button className="btn-primary" onClick={addCustomRule} disabled={aiBusy}>
-            追加
-          </button>
+
+        {/* 項目から追加（かんたん・確実） */}
+        <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+          <p className="text-sm font-semibold text-slate-700">項目から追加（かんたん）</p>
+          {staff.length === 0 ? (
+            <p className="text-sm text-slate-400">先に「スタッフ」を登録してください。</p>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-slate-500">条件の種類</span>
+                <select
+                  className="input max-w-[16rem]"
+                  value={rKind}
+                  onChange={(e) => setRKind(e.target.value as RuleKind)}
+                >
+                  {RULE_TYPE_META.map((m) => (
+                    <option key={m.kind} value={m.kind}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {ruleMeta.needs.a && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">{ruleMeta.needs.b ? 'スタッフ1' : 'スタッフ'}</span>
+                  <select
+                    className="input max-w-[10rem]"
+                    value={rStaffA}
+                    onChange={(e) => setRStaffA(e.target.value)}
+                  >
+                    <option value="">選択</option>
+                    {staff.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {ruleMeta.needs.b && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">スタッフ2</span>
+                  <select
+                    className="input max-w-[10rem]"
+                    value={rStaffB}
+                    onChange={(e) => setRStaffB(e.target.value)}
+                  >
+                    <option value="">選択</option>
+                    {staff
+                      .filter((s) => s.id !== rStaffA)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
+              {ruleMeta.needs.weekday && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">曜日</span>
+                  <select
+                    className="input max-w-[7rem]"
+                    value={rWeekday}
+                    onChange={(e) => setRWeekday(e.target.value)}
+                  >
+                    <option value="">選択</option>
+                    {WEEKDAY_OPTS.map((w, i) => (
+                      <option key={i} value={i}>
+                        {w}曜
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {ruleMeta.needs.shift && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">シフト</span>
+                  <select
+                    className="input max-w-[10rem]"
+                    value={rShift}
+                    onChange={(e) => setRShift(e.target.value)}
+                  >
+                    <option value="">選択</option>
+                    {shifts.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {ruleMeta.needs.num && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">
+                    {ruleMeta.needs.num === 'week' ? '日数/週' : '連勤日数'}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    className="input w-24"
+                    value={rNum}
+                    onChange={(e) => setRNum(e.target.value)}
+                  />
+                </label>
+              )}
+              <button className="btn-primary" onClick={addStructuredRule}>
+                追加
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* AI解釈（複雑な文はこちら。モデルを切り替え可能） */}
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <span className="text-sm text-slate-600">
-            うまく変換されないときは <b>AIで解釈</b>：
-          </span>
-          <select
-            className="input max-w-[13rem]"
-            value={aiModel}
-            onChange={(e) => changeModel(e.target.value)}
-            disabled={aiBusy}
-            title="使用するAIモデルを切り替えます"
-          >
-            {AI_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}（{m.hint}）
-              </option>
-            ))}
-          </select>
-          <button className="btn-ghost btn-sm" onClick={addWithAi} disabled={aiBusy || !ruleText.trim()}>
-            {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
-          </button>
+        {/* 文章で追加（その他） */}
+        <div className="space-y-2 rounded-xl border border-slate-200 p-3">
+          <p className="text-sm font-semibold text-slate-700">文章で追加（その他）</p>
+          <p className="section-desc">
+            上の項目にあてはまらない条件を文章で。例:「月初はベテランを多めに」「〇〇は繁忙期だけ増やす」
+          </p>
+          <div className="flex gap-2">
+            <input
+              className="input flex-1"
+              placeholder="例: 高橋は火曜は休み"
+              value={ruleText}
+              onChange={(e) => setRuleText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addCustomRule()}
+              disabled={aiBusy}
+            />
+            <button className="btn-primary" onClick={addCustomRule} disabled={aiBusy}>
+              追加
+            </button>
+          </div>
+
+          {/* AI解釈（複雑な文はこちら。モデルを切り替え可能） */}
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <span className="text-sm text-slate-600">
+              うまく変換されないときは <b>AIで解釈</b>：
+            </span>
+            <select
+              className="input max-w-[13rem]"
+              value={aiModel}
+              onChange={(e) => changeModel(e.target.value)}
+              disabled={aiBusy}
+              title="使用するAIモデルを切り替えます"
+            >
+              {AI_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}（{m.hint}）
+                </option>
+              ))}
+            </select>
+            <button className="btn-ghost btn-sm" onClick={addWithAi} disabled={aiBusy || !ruleText.trim()}>
+              {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
+            </button>
+          </div>
         </div>
 
         {ruleFeedback && <p className="text-sm font-medium text-slate-600">{ruleFeedback}</p>}
