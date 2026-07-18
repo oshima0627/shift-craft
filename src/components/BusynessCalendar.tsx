@@ -217,7 +217,7 @@ export default function BusynessCalendar() {
                     {day}
                     {holiday && <span className="ml-0.5 text-[11px] text-red-500">祝</span>}
                   </span>
-                  <span className="mt-0.5 rounded bg-slate-600 px-1.5 text-[11px] font-semibold text-white">
+                  <span className="mt-0.5 inline-block max-w-full truncate rounded bg-slate-600 px-1.5 text-[11px] font-semibold text-white">
                     定休日
                   </span>
                 </button>

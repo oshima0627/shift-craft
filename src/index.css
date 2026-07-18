@@ -50,7 +50,8 @@
 
   /* ===== 入力欄（大きめ・枠がはっきり） ===== */
   .input {
-    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-800 transition-colors placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200;
+    /* min-w-0: flex/grid 内で入力自身の固有最小幅により隣接要素と重なるのを防ぐ */
+    @apply w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-800 transition-colors placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200;
   }
   .label {
     @apply mb-1.5 block text-sm font-semibold text-slate-600;
