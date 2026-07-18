@@ -122,8 +122,8 @@ export default function DayOffCalendar() {
           スタッフと対象期間（忙しさタブ）を設定すると、ここに休みカレンダーが表示されます。
         </p>
       ) : (
-        <div className="card p-2 sm:p-3">
-          <table className="w-full table-fixed border-collapse text-sm">
+        <div className="card overflow-x-auto p-2 sm:p-3">
+          <table className="w-full min-w-[62rem] table-fixed border-collapse text-sm">
             <colgroup>
               <col className="w-[5.5rem]" />
               {dates.map((d) => (
@@ -133,7 +133,9 @@ export default function DayOffCalendar() {
             </colgroup>
             <thead>
               <tr>
-                <th className="border-b border-slate-200 px-1 py-1 text-left text-xs">スタッフ</th>
+                <th className="sticky left-0 z-10 border-b border-slate-200 bg-white px-1 py-1 text-left text-xs">
+                  スタッフ
+                </th>
                 {dates.map((date) => (
                   <th
                     key={date}
@@ -147,7 +149,9 @@ export default function DayOffCalendar() {
               </tr>
               {/* 忙しさの色 */}
               <tr>
-                <th className="px-1 py-0.5 text-right text-[10px] font-normal text-slate-400">忙しさ</th>
+                <th className="sticky left-0 z-10 bg-white px-1 py-0.5 text-right text-[10px] font-normal text-slate-400">
+                  忙しさ
+                </th>
                 {dates.map((date) => {
                   const level = busynessOf(data, date)
                   return (
@@ -164,7 +168,7 @@ export default function DayOffCalendar() {
                 const leaveByDate = new Map(st.leaves.map((l) => [l.date, l.typeId]))
                 return (
                   <tr key={st.id}>
-                    <td className="border-b border-slate-100 px-1 py-1 font-medium text-slate-700 whitespace-nowrap text-xs">
+                    <td className="sticky left-0 z-10 border-b border-slate-100 bg-white px-1 py-1 font-medium text-slate-700 whitespace-nowrap text-xs">
                       {st.name}
                     </td>
                     {dates.map((date) => {
@@ -205,7 +209,9 @@ export default function DayOffCalendar() {
               })}
               {/* 日別の休み人数 */}
               <tr className="bg-slate-50 font-medium">
-                <td className="bg-slate-50 px-1 py-1 text-slate-600 whitespace-nowrap text-xs">休み人数</td>
+                <td className="sticky left-0 z-10 bg-slate-50 px-1 py-1 text-slate-600 whitespace-nowrap text-xs">
+                  休み人数
+                </td>
                 {dates.map((date) => {
                   const n = offCountByDate.get(date) ?? 0
                   const ratio = staff.length > 0 ? n / staff.length : 0

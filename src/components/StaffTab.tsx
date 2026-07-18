@@ -22,7 +22,7 @@ export default function StaffTab() {
         </p>
       </div>
 
-      <div className="card flex gap-2">
+      <div className="card flex flex-col gap-2 sm:flex-row">
         <input
           className="input flex-1"
           placeholder="スタッフ名を入力"

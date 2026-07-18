@@ -25,7 +25,7 @@ export default function RolesTab() {
         </p>
       </div>
 
-      <div className="card flex gap-2">
+      <div className="card flex flex-col gap-2 sm:flex-row">
         <input
           className="input flex-1"
           placeholder="役割名を入力"
