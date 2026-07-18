@@ -237,7 +237,7 @@ export default function BusynessCalendar() {
                   {holiday && <span className="ml-0.5 text-[11px] text-red-500">祝</span>}
                 </span>
                 <span
-                  className="mt-0.5 rounded px-1.5 text-[11px] font-semibold text-white"
+                  className="mt-0.5 inline-block max-w-full truncate rounded px-1.5 text-[11px] font-semibold text-white"
                   style={{ backgroundColor: level?.color }}
                 >
                   {level?.name ?? ''}

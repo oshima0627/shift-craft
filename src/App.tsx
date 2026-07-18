@@ -108,22 +108,23 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
 
         {/* 手順ナビ：①〜⑧の流れが一目でわかるよう、番号つきの大きなステップに */}
         <nav className={`mx-auto ${HEADER_WIDTH} px-3 pb-3 sm:px-5`}>
-          <ol className="flex flex-wrap gap-2">
+          {/* スマホでは折り返さず横スクロール（ヘッダーが縦に伸びないように）。sm以上は従来どおり折り返し */}
+          <ol className="-mx-3 flex flex-nowrap gap-2 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden">
             {TABS.map((t, i) => {
               const active = tab === t.id
               return (
-                <li key={t.id}>
+                <li key={t.id} className="shrink-0">
                   <button
                     onClick={() => setTab(t.id)}
                     aria-current={active ? 'step' : undefined}
-                    className={`flex min-h-[2.75rem] items-center gap-2 rounded-xl border px-3.5 py-2 text-base font-semibold transition-colors ${
+                    className={`flex min-h-[2.25rem] items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-sm font-semibold transition-colors sm:min-h-[2.75rem] sm:gap-2 sm:px-3.5 sm:py-2 sm:text-base ${
                       active
                         ? 'border-brand-500 bg-brand-500 text-white shadow-sm'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
                     }`}
                   >
                     <span
-                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold sm:h-6 sm:w-6 sm:text-sm ${
                         active ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
                       }`}
                     >

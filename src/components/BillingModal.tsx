@@ -58,16 +58,16 @@ export default function BillingModal({ open, onClose, billingConfigured, subscri
               disabled={!!busy}
               onClick={() => go(() => startCheckout('monthly'), 'monthly')}
             >
-              <span>月額プラン</span>
-              <span className="font-bold">¥1,480 / 月</span>
+              <span className="min-w-0 truncate">月額プラン</span>
+              <span className="shrink-0 font-bold">¥1,480 / 月</span>
             </button>
             <button
               className="btn w-full justify-between"
               disabled={!!busy}
               onClick={() => go(() => startCheckout('yearly'), 'yearly')}
             >
-              <span>年額プラン（2ヶ月分お得）</span>
-              <span className="font-bold">¥14,800 / 年</span>
+              <span className="min-w-0 truncate">年額プラン（2ヶ月分お得）</span>
+              <span className="shrink-0 font-bold">¥14,800 / 年</span>
             </button>
             {subscribed && (
               <button
