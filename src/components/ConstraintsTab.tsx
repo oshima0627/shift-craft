@@ -241,7 +241,7 @@ export default function ConstraintsTab() {
             手動編集後も違反があれば警告されます。
           </p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="label">連勤上限（日）</label>
             <input

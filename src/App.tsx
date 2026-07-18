@@ -109,7 +109,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
         {/* 手順ナビ：①〜⑧の流れが一目でわかるよう、番号つきの大きなステップに */}
         <nav className={`mx-auto ${HEADER_WIDTH} px-3 pb-3 sm:px-5`}>
           {/* スマホでは折り返さず横スクロール（ヘッダーが縦に伸びないように）。sm以上は従来どおり折り返し */}
-          <ol className="-mx-3 flex flex-nowrap gap-2 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden">
+          <ol className="flex flex-nowrap gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:flex-wrap sm:pb-0 [&::-webkit-scrollbar]:hidden">
             {TABS.map((t, i) => {
               const active = tab === t.id
               return (
