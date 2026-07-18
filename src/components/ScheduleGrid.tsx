@@ -33,7 +33,9 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
   }
 
   return (
-    <div className="card overflow-x-auto p-2 sm:p-3">
+    <div className="card p-2 sm:p-3">
+      {/* スクロールは内側div（パディング無し）に。固定列の左にスクロール内容が覗くのを防ぐ */}
+      <div className="overflow-x-auto">
       <table className="border-collapse text-sm">
         <thead>
           <tr>
@@ -147,6 +149,7 @@ export default function ScheduleGrid({ data, result, onChange }: Props) {
           ))}
         </tbody>
       </table>
+      </div>
 
       {editing && (
         <CellEditor
