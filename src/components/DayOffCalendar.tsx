@@ -122,8 +122,10 @@ export default function DayOffCalendar() {
           スタッフと対象期間（忙しさタブ）を設定すると、ここに休みカレンダーが表示されます。
         </p>
       ) : (
-        <div className="card overflow-x-auto p-2 sm:p-3">
-          <table className="w-full min-w-[62rem] table-fixed border-collapse text-sm">
+        <div className="card p-2 sm:p-3">
+          {/* スクロールは内側div（パディング無し）に。固定列の左にスクロール内容が覗くのを防ぐ */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[62rem] table-fixed border-collapse text-sm">
             <colgroup>
               <col className="w-[5.5rem]" />
               {dates.map((d) => (
@@ -234,7 +236,8 @@ export default function DayOffCalendar() {
                 </td>
               </tr>
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
