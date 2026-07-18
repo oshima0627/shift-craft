@@ -73,38 +73,41 @@ export default function ShiftsTab() {
         </button>
       </div>
 
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {shifts.map((shift) => (
           <div key={shift.id} className="card space-y-2">
-            <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-[8rem] flex-1">
-              <label className="label">名称</label>
-              <input
-                className="input"
-                value={shift.name}
-                onChange={(e) => updateShift(shift.id, { name: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="label">開始</label>
-              <input
-                type="time"
-                className="input"
-                value={shift.start}
-                onChange={(e) => updateShift(shift.id, { start: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="label">終了</label>
-              <input
-                type="time"
-                className="input"
-                value={shift.end}
-                onChange={(e) => updateShift(shift.id, { end: e.target.value })}
-              />
-            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="w-full sm:w-auto sm:min-w-[8rem] sm:flex-1">
+                <label className="label">名称</label>
+                <input
+                  className="input"
+                  value={shift.name}
+                  onChange={(e) => updateShift(shift.id, { name: e.target.value })}
+                />
+              </div>
+              {/* 開始・終了はスマホでも横並び（各50%）、PCは従来どおり */}
+              <div className="flex min-w-0 items-end gap-3">
+                <div className="min-w-0 flex-1 sm:flex-none">
+                  <label className="label">開始</label>
+                  <input
+                    type="time"
+                    className="input"
+                    value={shift.start}
+                    onChange={(e) => updateShift(shift.id, { start: e.target.value })}
+                  />
+                </div>
+                <div className="min-w-0 flex-1 sm:flex-none">
+                  <label className="label">終了</label>
+                  <input
+                    type="time"
+                    className="input"
+                    value={shift.end}
+                    onChange={(e) => updateShift(shift.id, { end: e.target.value })}
+                  />
+                </div>
+              </div>
               <button
-                className="btn-danger"
+                className="btn-danger w-full sm:w-auto"
                 onClick={() => {
                   if (confirm(`時間帯「${shift.name}」を削除しますか？`)) removeShift(shift.id)
                 }}

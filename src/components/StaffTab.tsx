@@ -76,17 +76,18 @@ function StaffRow({ staff }: { staff: Staff }) {
 
   return (
     <div className="card space-y-3">
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
         <input
-          className="input max-w-[11rem] font-semibold"
+          className="input w-full font-semibold sm:max-w-[11rem]"
           value={staff.name}
           onChange={(e) => updateStaff(staff.id, { name: e.target.value })}
         />
-        <span className={`chip ${levelColor}`}>{EXPERIENCE_LABELS[staff.level]}</span>
-        {staff.isMinor && (
-          <span className="chip bg-purple-100 text-purple-700">18歳未満</span>
-        )}
-        <div className="flex flex-1 flex-wrap gap-1">
+        {/* 経験区分・役割チップ（スマホでは名前の下の行にまとめて折り返し） */}
+        <div className="flex flex-wrap items-center gap-2 sm:flex-1">
+          <span className={`chip ${levelColor}`}>{EXPERIENCE_LABELS[staff.level]}</span>
+          {staff.isMinor && (
+            <span className="chip bg-purple-100 text-purple-700">18歳未満</span>
+          )}
           {staff.roleIds.map((rid) => {
             const role = roles.find((r) => r.id === rid)
             if (!role) return null
@@ -104,21 +105,24 @@ function StaffRow({ staff }: { staff: Staff }) {
             <span className="text-xs text-red-500">役割未設定</span>
           )}
         </div>
-        <button className="btn-ghost btn-sm" onClick={() => setOpen(!open)}>
-          {open ? '閉じる' : '詳細'}
-        </button>
-        <button
-          className="btn-danger btn-sm"
-          onClick={() => {
-            if (confirm(`スタッフ「${staff.name}」を削除しますか？`)) removeStaff(staff.id)
-          }}
-        >
-          削除
-        </button>
+        {/* 操作ボタン（スマホでは最下段に横並び） */}
+        <div className="flex gap-2">
+          <button className="btn-ghost btn-sm" onClick={() => setOpen(!open)}>
+            {open ? '閉じる' : '詳細'}
+          </button>
+          <button
+            className="btn-danger btn-sm"
+            onClick={() => {
+              if (confirm(`スタッフ「${staff.name}」を削除しますか？`)) removeStaff(staff.id)
+            }}
+          >
+            削除
+          </button>
+        </div>
       </div>
 
       {open && (
-        <div className="grid gap-4 border-t border-slate-100 pt-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 border-t border-slate-100 pt-3 sm:grid-cols-2">
           <div>
             <label className="label">担当できる役割</label>
             <div className="flex flex-wrap gap-1.5">
