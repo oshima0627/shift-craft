@@ -206,9 +206,19 @@ export function registerAccount(username: string, password: string) {
   return postJson('/api/auth/register', { username, password })
 }
 
-/** 新規登録の申請（公開）。管理者の承認後にログインできるようになる */
-export function requestAccess(username: string, password: string, email: string) {
-  return postJson('/api/auth/request-access', { username, password, email })
+/** 新規登録（公開・承認不要）。登録すると同時にログイン状態になる */
+export function signup(username: string, password: string, email: string) {
+  return postJson('/api/auth/signup', { username, password, email })
+}
+
+/** パスワード再設定リンクの送信を依頼（公開）。存在有無は返らない（常に ok） */
+export function forgotPassword(email: string) {
+  return postJson('/api/auth/forgot-password', { email })
+}
+
+/** 新しいパスワードを設定（公開・メールのトークンで認可） */
+export function resetPassword(token: string, password: string) {
+  return postJson('/api/auth/reset-password', { token, password })
 }
 
 /** ログアウト */

@@ -2,10 +2,13 @@
  * Cloudflare Worker: 静的アセット配信 + 認証付き設定保存API（D1）。
  *
  * 認証（アプリ内ログイン）:
- *  GET  /api/auth/status  → { configured, authenticated }
- *  POST /api/auth/setup   → 初回パスワード設定 { password }（未設定時のみ）
- *  POST /api/auth/login   → ログイン { password } → セッションCookie発行
- *  POST /api/auth/logout  → ログアウト（Cookie失効）
+ *  GET  /api/auth/status          → { configured, authenticated }
+ *  POST /api/auth/setup           → 初回アカウント作成 { username, password }（未設定時のみ）
+ *  POST /api/auth/signup          → 新規登録（公開・承認不要）{ username, password, email }
+ *  POST /api/auth/login           → ログイン { username, password } → セッションCookie発行
+ *  POST /api/auth/logout          → ログアウト（Cookie失効）
+ *  POST /api/auth/forgot-password → パスワード再設定メールの送信 { email }（存在有無は返さない）
+ *  POST /api/auth/reset-password  → 新しいパスワードを設定 { token, password }
  *
  * 設定（要ログイン）:
  *  GET  /api/settings     → { data, updatedAt }（未保存なら404）
@@ -14,6 +17,7 @@
  *
  * パスワードはPBKDF2でハッシュ化してD1に保存。セッションはHMAC署名付きトークンを
  * HttpOnly Cookie で管理する。テーブルは初回アクセス時に自動作成する。
+ * 新規登録は管理者の承認を必要とせず、登録後すぐにログインできる。
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -29,11 +33,6 @@ export interface D1Database {
   prepare(query: string): D1PreparedStatement
 }
 
-/** Email Routing 送信バインディング（cloudflare:email）の最小型 */
-export interface SendEmailBinding {
-  send(message: unknown): Promise<void>
-}
-
 export interface Env {
   DB: D1Database
   ASSETS: { fetch(request: Request): Promise<Response> }
@@ -42,8 +41,6 @@ export interface Env {
    * 未設定の場合はAI解釈機能が無効になる（他機能は影響なし）。
    */
   ANTHROPIC_API_KEY?: string
-  /** 承認メール送信用（wrangler.jsonc の send_email バインディング） */
-  SEND_EMAIL?: SendEmailBinding
   /** Stripe 秘密鍵（`wrangler secret put STRIPE_SECRET_KEY`）。未設定で課金機能は無効 */
   STRIPE_SECRET_KEY?: string
   /** Stripe Webhook 署名シークレット（`whsec_...`） */
@@ -56,8 +53,8 @@ export interface Env {
   APP_URL?: string
   /**
    * Resend APIキー（`wrangler secret put RESEND_API_KEY`）。
-   * 申請者（任意のメールアドレス）への承認通知メール送信に使う。
-   * 未設定でも承認自体は動く（メールだけ送らない）。
+   * パスワード再設定リンクを利用者（任意のメールアドレス）へ送るのに使う。
+   * 未設定の場合はメールを送れないため、パスワード再設定は利用できない。
    */
   RESEND_API_KEY?: string
 }
@@ -71,12 +68,10 @@ export interface StripeConfig {
   appUrl?: string
 }
 
-/** 新規登録の承認メールの宛先（管理者） */
-const ADMIN_EMAIL = 'oshima6.27@gmail.com'
-/** 送信元アドレス（Email Routing を有効化した独自ドメインのアドレス） */
+/** 送信元アドレス（Resend で検証済みの独自ドメインのアドレス） */
 const MAIL_FROM = 'noreply@nexeed-lab.com'
-/** 承認リンクの有効期限（7日） */
-const APPROVAL_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** パスワード再設定リンクの有効期限（1時間） */
+const RESET_TTL_MS = 60 * 60 * 1000
 
 const HISTORY_KEEP = 20
 const MAX_BODY_BYTES = 1_000_000
@@ -91,7 +86,7 @@ interface SettingsRow {
 interface UserRow {
   username: string
   password_hash: string
-  /** 'active'=ログイン可 / 'pending'=承認待ち */
+  /** 'active'=ログイン可（承認制は廃止したため常に active） */
   status?: string
   email?: string | null
   /** Stripe購読状態: 'active'/'trialing'/'past_due'/'canceled'/'comp'（無料招待）等。null=未購読 */
@@ -195,17 +190,15 @@ async function verifySessionToken(token: string, secret: string): Promise<string
   }
 }
 
-/** 承認/却下リンク用の署名トークン（HMAC）。sub=ユーザー名, act=approve|deny */
-async function signApproval(secret: string, username: string, act: 'approve' | 'deny'): Promise<string> {
-  const payload = b64(enc.encode(JSON.stringify({ exp: Date.now() + APPROVAL_TTL_MS, sub: username, act })))
+/** パスワード再設定リンク用の署名トークン（HMAC）。sub=ユーザー名, act=reset */
+export async function signReset(secret: string, username: string): Promise<string> {
+  const payload = b64(enc.encode(JSON.stringify({ exp: Date.now() + RESET_TTL_MS, sub: username, act: 'reset' })))
   const sig = await hmac(secret, payload)
   return `${payload}.${sig}`
 }
 
-async function verifyApproval(
-  token: string,
-  secret: string,
-): Promise<{ sub: string; act: 'approve' | 'deny' } | null> {
+/** 有効な再設定トークンならユーザー名を返す。無効なら null */
+async function verifyReset(token: string, secret: string): Promise<string | null> {
   const dot = token.indexOf('.')
   if (dot < 0) return null
   const payload = token.slice(0, dot)
@@ -216,61 +209,20 @@ async function verifyApproval(
     const { exp, sub, act } = JSON.parse(dec.decode(fromB64(payload))) as {
       exp: number
       sub: string
-      act: 'approve' | 'deny'
+      act: string
     }
     if (typeof exp !== 'number' || Date.now() >= exp) return null
-    if (typeof sub !== 'string' || (act !== 'approve' && act !== 'deny')) return null
-    return { sub, act }
+    if (typeof sub !== 'string' || act !== 'reset') return null
+    return sub
   } catch {
     return null
   }
 }
 
-/** 管理者へ承認依頼メールを送る（Email Routing 送信バインディング経由） */
-async function sendApprovalMail(
-  binding: SendEmailBinding | undefined,
-  origin: string,
-  username: string,
-  requesterEmail: string | null,
-  approveToken: string,
-  denyToken: string,
-): Promise<void> {
-  if (!binding) throw new Error('send_email binding not configured')
-  // cloudflare:email は Workers ランタイム専用モジュール（動的importでテスト環境の解決を避ける）
-  // @ts-ignore
-  const { EmailMessage } = await import('cloudflare:email')
-  const { createMimeMessage } = await import('mimetext')
-  const approveUrl = `${origin}/api/auth/approve?token=${encodeURIComponent(approveToken)}`
-  const denyUrl = `${origin}/api/auth/deny?token=${encodeURIComponent(denyToken)}`
-  const msg = createMimeMessage()
-  msg.setSender({ name: 'ShiftCraft', addr: MAIL_FROM })
-  msg.setRecipient(ADMIN_EMAIL)
-  msg.setSubject(`【ShiftCraft】新規登録の承認依頼: ${username}`)
-  msg.addMessage({
-    contentType: 'text/plain',
-    data: [
-      'ShiftCraft に新しい登録申請がありました。',
-      '',
-      `ユーザーID: ${username}`,
-      `連絡先: ${requesterEmail || '（未入力）'}`,
-      '',
-      '▼ 承認する（このユーザーがログインできるようになります）',
-      approveUrl,
-      '',
-      '▼ 却下する（申請を削除します）',
-      denyUrl,
-      '',
-      '心当たりが無い場合は「却下」を押してください。リンクの有効期限は7日間です。',
-    ].join('\n'),
-  })
-  const email = new EmailMessage(MAIL_FROM, ADMIN_EMAIL, msg.asRaw())
-  await binding.send(email)
-}
-
 /**
  * Resend（外部配信サービス）経由で任意のメールアドレスにメールを送る。
- * Cloudflare Email Routing は検証済みの自分のアドレス宛にしか送れないため、
- * 不特定の申請者への通知には Resend を使う。キー未設定なら送らず false を返す。
+ * パスワード再設定リンクを不特定の利用者へ送るのに使う。
+ * キー未設定なら送らず false を返す。
  */
 async function sendViaResend(
   apiKey: string | undefined,
@@ -288,19 +240,6 @@ async function sendViaResend(
     body: JSON.stringify({ from: `ShiftCraft <${MAIL_FROM}>`, to, subject, text }),
   })
   return res.ok
-}
-
-/** 承認/却下の結果をブラウザに返す簡易HTMLページ */
-function htmlPage(title: string, body: string): Response {
-  return new Response(
-    `<!doctype html><html lang="ja"><head><meta charset="utf-8">` +
-      `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-      `<title>${title}</title></head>` +
-      `<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:12vh auto;padding:0 1.5rem;color:#1e293b;line-height:1.7">` +
-      `<h1 style="font-size:1.4rem">${title}</h1><p>${body}</p>` +
-      `<p><a href="/" style="color:#2f59c4">ShiftCraft を開く</a></p></body></html>`,
-    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } },
-  )
 }
 
 function readCookie(request: Request, name: string): string | null {
@@ -336,8 +275,8 @@ async function ensureSchema(db: D1Database): Promise<void> {
          id INTEGER PRIMARY KEY AUTOINCREMENT, json TEXT NOT NULL, saved_at TEXT NOT NULL)`,
     )
     .run()
-  // ユーザー（ID＋パスワード）。複数アカウント可。
-  // status: 'active'=ログイン可 / 'pending'=承認待ち。email: 申請者の連絡先（任意）。
+  // ユーザー（ID＋パスワード）。複数アカウント可。承認制は廃止したため status は常に 'active'。
+  // status: 'active'=ログイン可（旧スキーマ互換のため列は残す）。email: 連絡先（既定はID=メール）。
   // plan: 'trial'=お試し（AI累計5回）/ 'active'=月額課金中（AI毎月30回）。
   // ai_used/ai_period: AI利用回数の集計（period は 'trial' か 'YYYY-MM'）。
   await db
@@ -813,7 +752,6 @@ export async function handleApi(
   request: Request,
   db: D1Database,
   apiKey?: string,
-  sendEmail?: SendEmailBinding,
   stripe?: StripeConfig,
   resendKey?: string,
 ): Promise<Response> {
@@ -889,8 +827,6 @@ export async function handleApi(
     const user = await getUser(db, username)
     const ok = user ? await verifyPassword(password, user.password_hash) : false
     if (!ok) return json({ error: 'invalid_credentials' }, 401)
-    // 承認待ちのアカウントはログイン不可
-    if (user && user.status === 'pending') return json({ error: 'pending_approval' }, 403)
     const secret = await ensureSessionSecret(db)
     const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
@@ -900,9 +836,9 @@ export async function handleApi(
     return json({ ok: true }, 200, { 'set-cookie': clearCookie() })
   }
 
-  // ---- 一般ユーザーの新規登録申請（公開・管理者の承認が必要） ----
-  if (path === '/api/auth/request-access' && request.method === 'POST') {
-    // 管理者アカウント（承認者）が未作成なら申請不可
+  // ---- 一般ユーザーの新規登録（公開・承認不要。登録後すぐログインできる） ----
+  if (path === '/api/auth/signup' && request.method === 'POST') {
+    // 初回アカウント（運営者）が未作成なら登録不可（先に /setup が必要）
     if ((await countUsers(db)) === 0) return json({ error: 'not_configured' }, 400)
     const body = await readJson<{ username?: string; password?: string; email?: string }>(request)
     const username = normalizeUsername(body?.username)
@@ -913,7 +849,7 @@ export async function handleApi(
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
 
     const secret = await ensureSessionSecret(db)
-    // 一般ユーザーの新規登録は 14日間の無料トライアルで開始（承認後に有効）
+    // 新規登録は 14日間の無料トライアルで開始。承認不要なので即 active。
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
     await db
       .prepare(
@@ -923,77 +859,71 @@ export async function handleApi(
         username,
         await hashPassword(password),
         new Date().toISOString(),
-        'pending',
-        email || null,
+        'active',
+        email || username,
         'trial',
         null,
         trialEndsAt,
       )
       .run()
 
-    // 承認メールを送信（失敗しても申請自体は成立させる。emailed で状況を返す）
-    let emailed = false
-    try {
-      const approveToken = await signApproval(secret, username, 'approve')
-      const denyToken = await signApproval(secret, username, 'deny')
-      await sendApprovalMail(sendEmail, url.origin, username, email || null, approveToken, denyToken)
-      emailed = true
-    } catch {
-      emailed = false
-    }
-    return json({ ok: true, emailed })
+    // 登録と同時にログイン状態にする（セッションCookieを発行）
+    const token = await signSession(secret, username)
+    return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
   }
 
-  // ---- 承認 / 却下（メール内リンク。署名トークンで認可） ----
-  if ((path === '/api/auth/approve' || path === '/api/auth/deny') && request.method === 'GET') {
-    const secret = await getSessionSecret(db)
-    const token = url.searchParams.get('token') ?? ''
-    const v = secret ? await verifyApproval(token, secret) : null
-    const wantAct = path.endsWith('approve') ? 'approve' : 'deny'
-    if (!v || v.act !== wantAct) {
-      return htmlPage('リンクが無効です', 'リンクの有効期限が切れているか、正しくありません。')
-    }
-    if (v.act === 'approve') {
-      await db
-        .prepare("UPDATE users SET status = 'active' WHERE username = ?1 AND status = 'pending'")
-        .bind(v.sub)
-        .run()
-      // 申請者へ承認通知メールを送る（Resend。キー未設定・失敗でも承認自体は成立）
-      let notified = false
-      try {
-        const applicant = await getUser(db, v.sub)
-        const to = applicant?.email || v.sub // email=ID 運用のため username がメールのこともある
-        if (to && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
-          notified = await sendViaResend(
+  // ---- パスワード再設定リンクの送信（公開） ----
+  if (path === '/api/auth/forgot-password' && request.method === 'POST') {
+    const body = await readJson<{ email?: string }>(request)
+    // メールアドレスをそのままIDとして運用しているため username = email
+    const email = normalizeUsername(body?.email)
+    // アカウントの有無は返さない（存在漏洩を防ぐため常に ok を返す）
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const user = await getUser(db, email)
+      if (user) {
+        try {
+          const secret = await ensureSessionSecret(db)
+          const token = await signReset(secret, email)
+          const resetUrl = `${url.origin}/reset?token=${encodeURIComponent(token)}`
+          await sendViaResend(
             resendKey,
-            to,
-            '【ShiftCraft】登録が承認されました',
+            user.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email) ? user.email : email,
+            '【ShiftCraft】パスワード再設定のご案内',
             [
-              'ShiftCraft への登録申請が承認されました。',
+              'ShiftCraft のパスワード再設定リクエストを受け付けました。',
               '',
-              '下記のログインページから、申請時のメールアドレス（ID）とパスワードでログインできます。',
-              url.origin + '/',
+              '下記のリンクを開き、新しいパスワードを設定してください（有効期限1時間）。',
+              resetUrl,
               '',
-              `ログインID: ${v.sub}`,
-              '',
-              'ご利用ありがとうございます。',
+              'このリクエストに心当たりが無い場合は、このメールを破棄してください。',
+              'パスワードは変更されません。',
             ].join('\n'),
           )
+        } catch {
+          // 送信失敗でもレスポンスは変えない（存在漏洩・列挙を防ぐ）
         }
-      } catch {
-        notified = false
       }
-      return htmlPage(
-        '承認しました',
-        `ユーザー「${v.sub}」を承認しました。本人はこのIDとパスワードでログインできます。` +
-          (notified ? '（承認メールを送信しました）' : ''),
-      )
     }
+    return json({ ok: true })
+  }
+
+  // ---- 新しいパスワードの設定（公開・署名トークンで認可） ----
+  if (path === '/api/auth/reset-password' && request.method === 'POST') {
+    const body = await readJson<{ token?: string; password?: string }>(request)
+    const token = typeof body?.token === 'string' ? body.token : ''
+    const password = (body?.password ?? '').trim()
+    if (password.length < 4) return json({ error: 'weak_password' }, 400)
+    const secret = await getSessionSecret(db)
+    const username = secret ? await verifyReset(token, secret) : null
+    if (!username) return json({ error: 'invalid_token' }, 400)
+    if (!(await getUser(db, username))) return json({ error: 'invalid_token' }, 400)
     await db
-      .prepare("DELETE FROM users WHERE username = ?1 AND status = 'pending'")
-      .bind(v.sub)
+      .prepare('UPDATE users SET password_hash = ?1 WHERE username = ?2')
+      .bind(await hashPassword(password), username)
       .run()
-    return htmlPage('却下しました', `ユーザー「${v.sub}」の登録申請を削除しました。`)
+    // 再設定と同時にログイン状態にする
+    const loginToken = await signSession(secret!, username)
+    return json({ ok: true }, 200, { 'set-cookie': sessionCookie(loginToken) })
   }
 
   // ---- ここから先は要ログイン ----
@@ -1216,14 +1146,7 @@ export default {
           priceYearly: env.STRIPE_PRICE_YEARLY,
           appUrl: env.APP_URL,
         }
-        return await handleApi(
-          request,
-          env.DB,
-          env.ANTHROPIC_API_KEY,
-          env.SEND_EMAIL,
-          stripe,
-          env.RESEND_API_KEY,
-        )
+        return await handleApi(request, env.DB, env.ANTHROPIC_API_KEY, stripe, env.RESEND_API_KEY)
       } catch (e) {
         return json({ error: 'internal', message: String(e) }, 500)
       }

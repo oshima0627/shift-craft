@@ -5,6 +5,7 @@ import {
   AI_LIMITS,
   computeEntitlement,
   verifyStripeSignature,
+  signReset,
   type D1Database,
   type D1PreparedStatement,
 } from './index'
@@ -73,8 +74,14 @@ function fakeDb() {
             })
             return
           }
+          if (query.startsWith('UPDATE users SET password_hash')) {
+            // パスワード再設定: SET password_hash = ?1 WHERE username = ?2
+            const u = users.get(bound[1] as string)
+            if (u) u.password_hash = bound[0] as string
+            return
+          }
           if (query.startsWith('UPDATE users SET status') || query.startsWith('DELETE FROM users')) {
-            // 承認/却下（テストでは未使用だが、SQL到達時に落ちないように受ける）
+            // 旧・承認/却下の名残（SQL到達時に落ちないように受ける）
             return
           }
           throw new Error(`unexpected run(): ${query}`)
@@ -209,60 +216,131 @@ describe('worker 認証（ID＋パスワード）', () => {
   })
 })
 
-describe('worker 新規登録の申請＆承認', () => {
-  it('管理者未作成なら申請不可（400）', async () => {
+describe('worker 新規登録（承認不要）', () => {
+  it('初回アカウント未作成なら登録不可（400）', async () => {
     const db = fakeDb()
     const res = await handleApi(
-      req('/api/auth/request-access', 'POST', { username: 'newbie', password: 'abcd' }),
+      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
       db,
     )
     expect(res.status).toBe(400)
   })
 
-  it('申請すると承認待ちで作成され、メール未設定でも申請自体は成立', async () => {
+  it('登録すると即 active で作成され、その場でセッションが発行される', async () => {
     const { db } = await authed()
     const res = await handleApi(
-      req('/api/auth/request-access', 'POST', {
-        username: 'newbie',
+      req('/api/auth/signup', 'POST', {
+        username: 'n@example.com',
         password: 'abcd',
         email: 'n@example.com',
       }),
       db,
     )
     expect(res.status).toBe(200)
-    // メール送信バインディング未指定 → emailed:false（申請は成立）
-    expect(await res.json()).toMatchObject({ ok: true, emailed: false })
+    expect(await res.json()).toMatchObject({ ok: true })
+    expect(res.headers.get('set-cookie')).toContain('sc_session=')
   })
 
-  it('承認待ちアカウントはログイン不可（403 pending_approval）', async () => {
+  it('登録後は承認なしですぐログインできる', async () => {
     const { db } = await authed()
     await handleApi(
-      req('/api/auth/request-access', 'POST', { username: 'newbie', password: 'abcd' }),
+      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
       db,
     )
     const res = await handleApi(
-      req('/api/auth/login', 'POST', { username: 'newbie', password: 'abcd' }),
+      req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'abcd' }),
       db,
     )
-    expect(res.status).toBe(403)
-    expect(await res.json()).toMatchObject({ error: 'pending_approval' })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('set-cookie')).toContain('sc_session=')
   })
 
-  it('既存IDでの申請は409', async () => {
+  it('既存IDでの登録は409', async () => {
     const { db } = await authed()
     const res = await handleApi(
-      req('/api/auth/request-access', 'POST', { username: USER, password: 'abcd' }),
+      req('/api/auth/signup', 'POST', { username: USER, password: 'abcd' }),
       db,
     )
     expect(res.status).toBe(409)
   })
+})
 
-  it('不正な承認トークンはHTMLでエラー表示（200）', async () => {
+describe('worker パスワード再設定', () => {
+  async function sessionSecret(db: D1Database): Promise<string> {
+    const row = await db
+      .prepare('SELECT session_secret FROM auth_meta WHERE id = 1')
+      .first<{ session_secret: string }>()
+    return row!.session_secret
+  }
+
+  it('forgot-password は存在有無に関わらず ok を返す', async () => {
     const { db } = await authed()
-    const res = await handleApi(req('/api/auth/approve?token=bogus', 'GET'), db)
+    await handleApi(
+      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
+      db,
+    )
+    // 存在しないメール（列挙を防ぐため ok）
+    const a = await handleApi(
+      req('/api/auth/forgot-password', 'POST', { email: 'nobody@example.com' }),
+      db,
+    )
+    expect(a.status).toBe(200)
+    expect(await a.json()).toMatchObject({ ok: true })
+    // 存在するメール（Resendキー未設定でも例外にならず ok）
+    const b = await handleApi(
+      req('/api/auth/forgot-password', 'POST', { email: 'n@example.com' }),
+      db,
+    )
+    expect(b.status).toBe(200)
+    expect(await b.json()).toMatchObject({ ok: true })
+  })
+
+  it('有効なトークンでパスワードを再設定でき、新パスワードでログインできる', async () => {
+    const { db } = await authed()
+    await handleApi(
+      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
+      db,
+    )
+    const token = await signReset(await sessionSecret(db), 'n@example.com')
+    const res = await handleApi(
+      req('/api/auth/reset-password', 'POST', { token, password: 'newpass' }),
+      db,
+    )
     expect(res.status).toBe(200)
-    expect(res.headers.get('content-type')).toContain('text/html')
-    expect(await res.text()).toContain('リンクが無効です')
+    expect(res.headers.get('set-cookie')).toContain('sc_session=')
+    // 旧パスワードは不可
+    const old = await handleApi(
+      req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'abcd' }),
+      db,
+    )
+    expect(old.status).toBe(401)
+    // 新パスワードは可
+    const neu = await handleApi(
+      req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'newpass' }),
+      db,
+    )
+    expect(neu.status).toBe(200)
+  })
+
+  it('不正なトークンは 400', async () => {
+    const { db } = await authed()
+    const res = await handleApi(
+      req('/api/auth/reset-password', 'POST', { token: 'bogus', password: 'newpass' }),
+      db,
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'invalid_token' })
+  })
+
+  it('短すぎるパスワードは 400', async () => {
+    const { db } = await authed()
+    const token = await signReset(await sessionSecret(db), USER)
+    const res = await handleApi(
+      req('/api/auth/reset-password', 'POST', { token, password: '12' }),
+      db,
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'weak_password' })
   })
 })
 
