@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import App from '../App'
+import { PrivacyPage, TermsPage, TokushohoPage } from './LegalPages'
 import { useStore } from '../state/store'
 import {
   getAuthStatus,
@@ -54,11 +55,17 @@ export default function AuthShell() {
     setPhase('ready')
   }
 
+  // 法令ページ（公開URL）。認証状態に関わらず、直リンク・ログイン前でも開ける。
+  const path = typeof window !== 'undefined' ? window.location.pathname : '/'
+  if (path === '/legal') return <TokushohoPage />
+  if (path === '/terms') return <TermsPage />
+  if (path === '/privacy') return <PrivacyPage />
+
   if (phase === 'loading') {
     return <Centered>読み込み中…</Centered>
   }
   // 新規登録の申請ページ（公開URL /register）。ログイン前でも開ける。
-  if (typeof window !== 'undefined' && window.location.pathname === '/register') {
+  if (path === '/register') {
     return <RegisterScreen />
   }
   if (phase === 'setup') {
@@ -321,6 +328,7 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
             </a>
           </p>
           <p className="mt-1 break-all text-slate-400">{registerUrl}</p>
+          <LegalLinks />
         </div>
       }
     />
@@ -341,12 +349,32 @@ function RegisterScreen() {
       doneMessage="申請を受け付けました。管理者が承認すると、入力したメールアドレス＋パスワードでログインできます。承認までしばらくお待ちください。"
       onSubmit={async (id, pw, email) => requestAccess(id, pw, email)}
       footer={
-        <p className="text-sm text-slate-500">
-          <a href="/" className="font-semibold text-brand-600 hover:underline">
-            ← ログイン画面へ戻る
-          </a>
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">
+            <a href="/" className="font-semibold text-brand-600 hover:underline">
+              ← ログイン画面へ戻る
+            </a>
+          </p>
+          <LegalLinks />
+        </div>
       }
     />
+  )
+}
+
+/** 法令ページへの共通リンク（ログイン・申請画面のフッター用） */
+function LegalLinks() {
+  return (
+    <nav className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-400">
+      <a href="/legal" className="hover:text-brand-600 hover:underline">
+        特定商取引法に基づく表記
+      </a>
+      <a href="/terms" className="hover:text-brand-600 hover:underline">
+        利用規約
+      </a>
+      <a href="/privacy" className="hover:text-brand-600 hover:underline">
+        プライバシーポリシー
+      </a>
+    </nav>
   )
 }
