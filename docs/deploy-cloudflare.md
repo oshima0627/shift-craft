@@ -169,31 +169,40 @@ npx -y wrangler secret put ANTHROPIC_API_KEY
 > APIキーの取得: [Anthropic Console](https://console.anthropic.com/) → API Keys。
 > 課金はAPI利用分のみ。解釈1回あたりごく少量のトークンしか使いません。
 
-## 8. 新規登録の承認メールを有効にする（Email Routing）
+## 8. 新規登録とパスワード再設定（承認不要）
 
-ログイン画面の「新規登録」から一般ユーザーが申請 → 管理者(`oshima6.27@gmail.com`)に
-確認メールが届き、**承認リンクを押すとログインできるようになる**フローです。メール送信は
-Cloudflare の Email Routing を使います（独自ドメインが必要。無料）。
+ログイン画面の「新規登録」から、**メールアドレスとパスワードだけで登録**できます。
+管理者の承認は不要で、登録するとその場でログイン状態になり、14日間の無料トライアルが
+始まります（`/api/auth/signup`）。
 
-1. Cloudflare ダッシュボード → 対象ドメイン（例 `nexeed-lab.com`）→ **Email → Email Routing** を有効化
-2. **Destination addresses** に `oshima6.27@gmail.com` を追加 → 届いた確認メールの
-   ボタンを押して **Verify**（検証必須。未検証だとメールが届きません）
-3. `wrangler.jsonc` の `send_email` バインディング（設定済み）で、送信元
-   `noreply@nexeed-lab.com`／宛先 `oshima6.27@gmail.com` にメールを送ります。
-   別ドメインで運用する場合は `worker/index.ts` の `MAIL_FROM` と、`wrangler.jsonc` の
-   `destination_address` を合わせて変更してください。
-4. 反映のため再デプロイ：`npm run deploy`（バインディング追加はデプロイが必要）
+パスワードを忘れた場合は、ログイン画面の「パスワードをお忘れの方」からメールアドレスを
+入力すると、再設定用リンクがメールで届きます（`/api/auth/forgot-password` →
+リンク先 `/reset` で新しいパスワードを設定）。リンクの有効期限は 1 時間です。
+
+### パスワード再設定メールを有効にする（Resend）
+
+再設定リンクは不特定の利用者のメールアドレス宛に送るため、外部配信サービス **Resend** を
+使います（Cloudflare Email Routing は検証済みの自分のアドレス宛にしか送れないため使いません）。
+
+1. [Resend](https://resend.com/) でアカウントを作成し、送信元ドメイン（例 `nexeed-lab.com`）を
+   **Verify**（DNS レコードを追加して検証）
+2. API キーを発行し、Worker のシークレットに設定：
+   ```bash
+   npx wrangler secret put RESEND_API_KEY
+   ```
+3. 送信元アドレスは `worker/index.ts` の `MAIL_FROM`（既定 `noreply@nexeed-lab.com`）です。
+   別ドメインで運用する場合は Resend で検証したドメインのアドレスに合わせて変更してください。
+
+> 補足: `RESEND_API_KEY` 未設定でも登録・ログインは動きます。ただしパスワード再設定
+> メールは送信されません（アカウントの有無を漏らさないため、画面上は常に「送信しました」と
+> 表示されます）。再設定機能を使うには Resend の設定が必要です。
 
 > ⚠️ **Cloudflare Access（手順5/A-5）を使っている場合の注意**
-> Access でドメイン全体を保護していると、`/register`（登録ページ）や `/api/auth/*`
-> （申請・承認リンク）に**部外者が到達できず、新規登録が機能しません**。
-> このアプリは独自のID＋パスワード＋承認で保護できるため、**セルフ登録を使うなら
-> この Worker では Cloudflare Access を外す**（アプリ内ログイン＋承認で運用）ことを推奨します。
-> Access を残す場合は、`/register` と `/api/auth/*` にバイパス（Service Auth / Public）を設定してください。
-
-> 補足: メール送信バインディング未設定・未検証でも**申請自体は成立**します（アカウントは
-> 「承認待ち」で作成）。その場合はメールが届かないので、検証を済ませてから再申請するか、
-> 検証後に届いたメールのリンクで承認してください。
+> Access でドメイン全体を保護していると、`/register`・`/forgot`・`/reset` や `/api/auth/*`
+> に**部外者が到達できず、新規登録やパスワード再設定が機能しません**。
+> **セルフ登録を使うなら この Worker では Cloudflare Access を外す**（アプリ内の
+> ID＋パスワードで保護）ことを推奨します。Access を残す場合は、これらのパスにバイパス
+> （Service Auth / Public）を設定してください。
 
 ## 運用メモ
 

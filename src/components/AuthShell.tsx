@@ -3,12 +3,14 @@ import App from '../App'
 import { PrivacyPage, TermsPage, TokushohoPage } from './LegalPages'
 import { useStore } from '../state/store'
 import {
+  forgotPassword,
   getAuthStatus,
   login as apiLogin,
   logout as apiLogout,
   pullCloudIntoStore,
   pushCloudIfChanged,
-  requestAccess,
+  resetPassword,
+  signup,
   setupAccount,
 } from '../utils/cloud'
 
@@ -64,9 +66,16 @@ export default function AuthShell() {
   if (phase === 'loading') {
     return <Centered>読み込み中…</Centered>
   }
-  // 新規登録の申請ページ（公開URL /register）。ログイン前でも開ける。
+  // 新規登録ページ（公開URL /register）。ログイン前でも開ける。
   if (path === '/register') {
     return <RegisterScreen />
+  }
+  // パスワード再設定（公開URL）。メール入力→リンク送信 / リンク先で新パスワード設定。
+  if (path === '/forgot') {
+    return <ForgotScreen />
+  }
+  if (path === '/reset') {
+    return <ResetScreen />
   }
   if (phase === 'setup') {
     return <SetupScreen onDone={enterAuthed} />
@@ -123,14 +132,36 @@ function Centered({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** 認証系フォームの共通カード枠（タイトル＋説明＋本文） */
+function CardShell({
+  title,
+  desc,
+  children,
+}: {
+  title: string
+  desc: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
+        <div className="mb-5">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
+        </div>
+        <h2 className="text-lg font-bold text-slate-800">{title}</h2>
+        <p className="mb-5 mt-1.5 text-base leading-relaxed text-slate-500">{desc}</p>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function AuthCard({
   title,
   desc,
   buttonLabel,
   onSubmit,
   confirm,
-  withEmail,
-  doneMessage,
   footer,
   idType = 'text',
   idPlaceholder = 'ID（ユーザー名）',
@@ -146,10 +177,6 @@ function AuthCard({
     email: string,
   ) => Promise<{ ok: boolean; error?: string }>
   confirm?: boolean
-  /** 連絡先メール入力欄を出すか（申請フォーム用） */
-  withEmail?: boolean
-  /** 成功時にフォームの代わりに表示する完了メッセージ（申請フォーム用） */
-  doneMessage?: string
   /** カード下部に表示する補助リンク等 */
   footer?: React.ReactNode
   /** 1つ目の入力欄の type（メールアドレスをIDにする場合は 'email'） */
@@ -158,16 +185,14 @@ function AuthCard({
   idPlaceholder?: string
   /** メッセージ内でIDを指す語（例: 'メールアドレス'） */
   idNoun?: string
-  /** メールアドレスをそのままIDとして使う（連絡先メール欄を出さず、email=id で送信） */
+  /** メールアドレスをそのままIDとして使う（email=id で送信し、形式も検証する） */
   emailAsId?: boolean
 }) {
   const [id, setId] = useState('')
   const [pw, setPw] = useState('')
   const [pw2, setPw2] = useState('')
-  const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => ref.current?.focus(), [])
 
@@ -190,98 +215,65 @@ function AuthCard({
       return
     }
     setBusy(true)
-    // メールをIDにする場合は email も id と同じ値で送る
-    const res = await onSubmit(id.trim(), pw, emailAsId ? id.trim() : email.trim())
+    // メールをIDとして運用するため、email 引数には id と同じ値を渡す
+    const res = await onSubmit(id.trim(), pw, id.trim())
     setBusy(false)
-    if (res.ok) {
-      if (doneMessage) setDone(true)
-      return
-    }
+    if (res.ok) return
     setError(
       res.error === 'invalid_credentials'
         ? `${idNoun}またはパスワードが違います。`
-        : res.error === 'pending_approval'
-          ? 'このアカウントはまだ承認されていません。管理者の承認後にログインできます。'
-          : res.error === 'username_taken'
-            ? `その${idNoun}は既に使われています。別の${idNoun}にしてください。`
-            : res.error === 'weak_password'
-              ? 'パスワードは4文字以上にしてください。'
-              : res.error === 'invalid_username'
-                ? `${idNoun}を入力してください。`
-                : res.error === 'not_configured'
-                  ? 'まだ管理者アカウントが作成されていないため申請できません。'
-                  : 'エラーが発生しました。通信状況を確認してください。',
+        : res.error === 'username_taken'
+          ? `その${idNoun}は既に使われています。別の${idNoun}にしてください。`
+          : res.error === 'weak_password'
+            ? 'パスワードは4文字以上にしてください。'
+            : res.error === 'invalid_username'
+              ? `${idNoun}を入力してください。`
+              : res.error === 'not_configured'
+                ? 'まだ利用の準備が整っていないため登録できません。しばらくしてからお試しください。'
+                : 'エラーが発生しました。通信状況を確認してください。',
     )
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
-        <div className="mb-5">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">ShiftCraft</h1>
-        </div>
-        <h2 className="text-lg font-bold text-slate-800">{title}</h2>
-        <p className="mb-5 mt-1.5 text-base leading-relaxed text-slate-500">{desc}</p>
-
-        {done && doneMessage ? (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-base leading-relaxed text-emerald-800">
-              {doneMessage}
-            </div>
-            {footer}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <input
-              ref={ref}
-              type={idType}
-              autoComplete={emailAsId ? 'email' : 'username'}
-              className="input"
-              placeholder={idPlaceholder}
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
-            />
-            <input
-              type="password"
-              autoComplete={confirm ? 'new-password' : 'current-password'}
-              className="input"
-              placeholder="パスワード"
-              value={pw}
-              onChange={(e) => setPw(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !confirm && submit()}
-            />
-            {confirm && (
-              <input
-                type="password"
-                autoComplete="new-password"
-                className="input"
-                placeholder="パスワード（確認）"
-                value={pw2}
-                onChange={(e) => setPw2(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
-              />
-            )}
-            {withEmail && (
-              <input
-                type="email"
-                autoComplete="email"
-                className="input"
-                placeholder="連絡先メール（任意・承認者への案内用）"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
-              />
-            )}
-            {error && <p className="text-sm font-medium text-red-600">{error}</p>}
-            <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
-              {busy ? '処理中…' : buttonLabel}
-            </button>
-            {footer}
-          </div>
+    <CardShell title={title} desc={desc}>
+      <div className="space-y-3">
+        <input
+          ref={ref}
+          type={idType}
+          autoComplete={emailAsId ? 'email' : 'username'}
+          className="input"
+          placeholder={idPlaceholder}
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+        />
+        <input
+          type="password"
+          autoComplete={confirm ? 'new-password' : 'current-password'}
+          className="input"
+          placeholder="パスワード"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && !confirm && submit()}
+        />
+        {confirm && (
+          <input
+            type="password"
+            autoComplete="new-password"
+            className="input"
+            placeholder="パスワード（確認）"
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
         )}
+        {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+        <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
+          {busy ? '処理中…' : buttonLabel}
+        </button>
+        {footer}
       </div>
-    </div>
+    </CardShell>
   )
 }
 
@@ -302,8 +294,6 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
 }
 
 function LoginScreen({ onDone }: { onDone: () => void }) {
-  const registerUrl =
-    (typeof window !== 'undefined' ? window.location.origin : '') + '/register'
   return (
     <AuthCard
       title="ログイン"
@@ -317,17 +307,20 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
         return res
       }}
       footer={
-        <div className="border-t border-slate-100 pt-4 text-sm leading-relaxed text-slate-500">
+        <div className="space-y-2 border-t border-slate-100 pt-4 text-sm leading-relaxed text-slate-500">
           <p>
-            アカウントをお持ちでない方は、下記の新規登録ページから申請してください。
-            管理者の承認後にログインできます。
-          </p>
-          <p className="mt-2">
+            アカウントをお持ちでない方は{' '}
             <a href="/register" className="font-semibold text-brand-600 hover:underline">
-              新規登録はこちら
+              新規登録
+            </a>
+            （メールアドレスとパスワードだけで、すぐにご利用いただけます）
+          </p>
+          <p>
+            パスワードをお忘れの方は{' '}
+            <a href="/forgot" className="font-semibold text-brand-600 hover:underline">
+              こちらから再設定
             </a>
           </p>
-          <p className="mt-1 break-all text-slate-400">{registerUrl}</p>
           <LegalLinks />
         </div>
       }
@@ -338,16 +331,20 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
 function RegisterScreen() {
   return (
     <AuthCard
-      title="新規登録の申請"
-      desc="メールアドレス（これがログインIDになります）とパスワードを入力して申請してください。管理者に確認メールが届き、承認されると、このメールアドレス＋パスワードでログインできるようになります。"
-      buttonLabel="この内容で申請する"
+      title="新規登録"
+      desc="メールアドレス（これがログインIDになります）とパスワードを入力するだけで登録できます。承認は不要で、登録後すぐにご利用いただけます。"
+      buttonLabel="登録してはじめる"
       confirm
       emailAsId
       idType="email"
       idPlaceholder="メールアドレス"
       idNoun="メールアドレス"
-      doneMessage="申請を受け付けました。管理者が承認すると、入力したメールアドレス＋パスワードでログインできます。承認までしばらくお待ちください。"
-      onSubmit={async (id, pw, email) => requestAccess(id, pw, email)}
+      onSubmit={async (id, pw, email) => {
+        const res = await signup(id, pw, email)
+        // 登録と同時にログイン状態になる → トップへ遷移してアプリを開く
+        if (res.ok && typeof window !== 'undefined') window.location.href = '/'
+        return res
+      }}
       footer={
         <div className="space-y-3">
           <p className="text-sm text-slate-500">
@@ -359,6 +356,166 @@ function RegisterScreen() {
         </div>
       }
     />
+  )
+}
+
+/** パスワード再設定: メールアドレスを入力して再設定リンクの送信を依頼する */
+function ForgotScreen() {
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => ref.current?.focus(), [])
+
+  const submit = async () => {
+    setError(null)
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('正しいメールアドレスを入力してください。')
+      return
+    }
+    setBusy(true)
+    const res = await forgotPassword(email.trim())
+    setBusy(false)
+    // 存在有無に関わらず常に完了扱い（アカウントの有無を漏らさない）
+    if (res.ok) setDone(true)
+    else setError('エラーが発生しました。通信状況を確認してください。')
+  }
+
+  return (
+    <CardShell
+      title="パスワードの再設定"
+      desc="登録したメールアドレスを入力してください。パスワード再設定用のリンクをメールでお送りします。"
+    >
+      {done ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-base leading-relaxed text-emerald-800">
+            入力されたメールアドレスが登録されている場合、再設定用のリンクをお送りしました。
+            メールをご確認ください（届かない場合は迷惑メールフォルダもご確認ください）。
+            リンクの有効期限は1時間です。
+          </div>
+          <p className="text-sm text-slate-500">
+            <a href="/" className="font-semibold text-brand-600 hover:underline">
+              ← ログイン画面へ戻る
+            </a>
+          </p>
+          <LegalLinks />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <input
+            ref={ref}
+            type="email"
+            autoComplete="email"
+            className="input"
+            placeholder="メールアドレス"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+          {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+          <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
+            {busy ? '送信中…' : '再設定リンクを送る'}
+          </button>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">
+              <a href="/" className="font-semibold text-brand-600 hover:underline">
+                ← ログイン画面へ戻る
+              </a>
+            </p>
+            <LegalLinks />
+          </div>
+        </div>
+      )}
+    </CardShell>
+  )
+}
+
+/** パスワード再設定: メール内リンク（?token=...）から新しいパスワードを設定する */
+function ResetScreen() {
+  const token =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('token') ?? ''
+      : ''
+  const [pw, setPw] = useState('')
+  const [pw2, setPw2] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => ref.current?.focus(), [])
+
+  const submit = async () => {
+    setError(null)
+    if (pw.length < 4) {
+      setError('パスワードは4文字以上にしてください。')
+      return
+    }
+    if (pw !== pw2) {
+      setError('確認用パスワードが一致しません。')
+      return
+    }
+    setBusy(true)
+    const res = await resetPassword(token, pw)
+    setBusy(false)
+    if (res.ok && typeof window !== 'undefined') {
+      // 再設定と同時にログイン状態になる → トップへ遷移
+      window.location.href = '/'
+      return
+    }
+    setError(
+      res.error === 'invalid_token'
+        ? 'リンクの有効期限が切れているか、正しくありません。お手数ですが再度お試しください。'
+        : res.error === 'weak_password'
+          ? 'パスワードは4文字以上にしてください。'
+          : 'エラーが発生しました。通信状況を確認してください。',
+    )
+  }
+
+  return (
+    <CardShell title="新しいパスワードの設定" desc="新しいパスワードを入力してください。">
+      {!token ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-base leading-relaxed text-red-700">
+            リンクが正しくありません。パスワード再設定メールのリンクからもう一度お開きください。
+          </div>
+          <p className="text-sm text-slate-500">
+            <a href="/forgot" className="font-semibold text-brand-600 hover:underline">
+              再設定リンクを取得し直す
+            </a>
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <input
+            ref={ref}
+            type="password"
+            autoComplete="new-password"
+            className="input"
+            placeholder="新しいパスワード"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+          />
+          <input
+            type="password"
+            autoComplete="new-password"
+            className="input"
+            placeholder="新しいパスワード（確認）"
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+          {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+          <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
+            {busy ? '設定中…' : 'この内容で設定する'}
+          </button>
+          <p className="text-sm text-slate-500">
+            <a href="/" className="font-semibold text-brand-600 hover:underline">
+              ← ログイン画面へ戻る
+            </a>
+          </p>
+        </div>
+      )}
+    </CardShell>
   )
 }
 
