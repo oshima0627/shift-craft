@@ -206,9 +206,14 @@ export function registerAccount(username: string, password: string) {
   return postJson('/api/auth/register', { username, password })
 }
 
-/** 新規登録（公開・承認不要）。登録すると同時にログイン状態になる */
+/** 新規登録（公開）。仮登録し確認メールを送る。メール内リンクで有効化するとログインできる */
 export function signup(username: string, password: string, email: string) {
   return postJson('/api/auth/signup', { username, password, email })
+}
+
+/** メールアドレス確認メールの再送（公開）。存在有無は返らない（常に ok） */
+export function resendVerification(email: string) {
+  return postJson('/api/auth/resend-verification', { email })
 }
 
 /** パスワード再設定リンクの送信を依頼（公開）。存在有無は返らない（常に ok） */

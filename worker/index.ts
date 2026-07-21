@@ -3,12 +3,14 @@
  *
  * 認証（アプリ内ログイン）:
  *  GET  /api/auth/status          → { configured, authenticated }
- *  POST /api/auth/setup           → 初回アカウント作成 { username, password }（未設定時のみ）
- *  POST /api/auth/signup          → 新規登録（公開・承認不要）{ username, password, email }
- *  POST /api/auth/login           → ログイン { username, password } → セッションCookie発行
- *  POST /api/auth/logout          → ログアウト（Cookie失効）
- *  POST /api/auth/forgot-password → パスワード再設定メールの送信 { email }（存在有無は返さない）
- *  POST /api/auth/reset-password  → 新しいパスワードを設定 { token, password }
+ *  POST /api/auth/setup               → 初回アカウント作成 { username, password }（未設定時のみ）
+ *  POST /api/auth/signup              → 新規登録（公開）{ username, password }。仮登録し確認メールを送る
+ *  GET  /api/auth/verify              → メールアドレス確認（メール内リンク・署名トークン）→ 有効化
+ *  POST /api/auth/resend-verification → 確認メールの再送 { email }（存在有無は返さない）
+ *  POST /api/auth/login               → ログイン { username, password } → セッションCookie発行
+ *  POST /api/auth/logout              → ログアウト（Cookie失効）
+ *  POST /api/auth/forgot-password     → パスワード再設定メールの送信 { email }（存在有無は返さない）
+ *  POST /api/auth/reset-password      → 新しいパスワードを設定 { token, password }
  *
  * 設定（要ログイン）:
  *  GET  /api/settings     → { data, updatedAt }（未保存なら404）
@@ -17,7 +19,8 @@
  *
  * パスワードはPBKDF2でハッシュ化してD1に保存。セッションはHMAC署名付きトークンを
  * HttpOnly Cookie で管理する。テーブルは初回アクセス時に自動作成する。
- * 新規登録は管理者の承認を必要とせず、登録後すぐにログインできる。
+ * 新規登録は管理者の承認は不要だが、メールアドレスの確認（本人のメールに届くリンクの
+ * クリック）を済ませるまではログインできない。
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -72,6 +75,8 @@ export interface StripeConfig {
 const MAIL_FROM = 'noreply@nexeed-lab.com'
 /** パスワード再設定リンクの有効期限（1時間） */
 const RESET_TTL_MS = 60 * 60 * 1000
+/** メールアドレス確認リンクの有効期限（24時間） */
+const VERIFY_TTL_MS = 24 * 60 * 60 * 1000
 
 const HISTORY_KEEP = 20
 const MAX_BODY_BYTES = 1_000_000
@@ -86,7 +91,7 @@ interface SettingsRow {
 interface UserRow {
   username: string
   password_hash: string
-  /** 'active'=ログイン可（承認制は廃止したため常に active） */
+  /** 'active'=ログイン可 / 'pending'=メールアドレス未確認（確認リンクを開くと active になる） */
   status?: string
   email?: string | null
   /** Stripe購読状態: 'active'/'trialing'/'past_due'/'canceled'/'comp'（無料招待）等。null=未購読 */
@@ -190,15 +195,27 @@ async function verifySessionToken(token: string, secret: string): Promise<string
   }
 }
 
-/** パスワード再設定リンク用の署名トークン（HMAC）。sub=ユーザー名, act=reset */
-export async function signReset(secret: string, username: string): Promise<string> {
-  const payload = b64(enc.encode(JSON.stringify({ exp: Date.now() + RESET_TTL_MS, sub: username, act: 'reset' })))
+/**
+ * 用途別の署名トークン（HMAC）。sub=ユーザー名, act=用途（reset/verify）。
+ * メール内リンクでの本人確認に使う（パスワード再設定・メールアドレス確認）。
+ */
+async function signToken(
+  secret: string,
+  username: string,
+  act: 'reset' | 'verify',
+  ttlMs: number,
+): Promise<string> {
+  const payload = b64(enc.encode(JSON.stringify({ exp: Date.now() + ttlMs, sub: username, act })))
   const sig = await hmac(secret, payload)
   return `${payload}.${sig}`
 }
 
-/** 有効な再設定トークンならユーザー名を返す。無効なら null */
-async function verifyReset(token: string, secret: string): Promise<string | null> {
+/** 指定した用途(act)の有効なトークンならユーザー名を返す。無効なら null */
+async function verifyToken(
+  token: string,
+  secret: string,
+  act: 'reset' | 'verify',
+): Promise<string | null> {
   const dot = token.indexOf('.')
   if (dot < 0) return null
   const payload = token.slice(0, dot)
@@ -206,17 +223,27 @@ async function verifyReset(token: string, secret: string): Promise<string | null
   const expected = await hmac(secret, payload)
   if (!timingSafeEqual(sig, expected)) return null
   try {
-    const { exp, sub, act } = JSON.parse(dec.decode(fromB64(payload))) as {
+    const parsed = JSON.parse(dec.decode(fromB64(payload))) as {
       exp: number
       sub: string
       act: string
     }
-    if (typeof exp !== 'number' || Date.now() >= exp) return null
-    if (typeof sub !== 'string' || act !== 'reset') return null
-    return sub
+    if (typeof parsed.exp !== 'number' || Date.now() >= parsed.exp) return null
+    if (typeof parsed.sub !== 'string' || parsed.act !== act) return null
+    return parsed.sub
   } catch {
     return null
   }
+}
+
+/** パスワード再設定リンク用トークン（有効期限 RESET_TTL_MS） */
+export function signReset(secret: string, username: string): Promise<string> {
+  return signToken(secret, username, 'reset', RESET_TTL_MS)
+}
+
+/** メールアドレス確認リンク用トークン（有効期限 VERIFY_TTL_MS） */
+export function signVerify(secret: string, username: string): Promise<string> {
+  return signToken(secret, username, 'verify', VERIFY_TTL_MS)
 }
 
 /**
@@ -240,6 +267,46 @@ async function sendViaResend(
     body: JSON.stringify({ from: `ShiftCraft <${MAIL_FROM}>`, to, subject, text }),
   })
   return res.ok
+}
+
+/**
+ * メールアドレス確認メールを送る（署名トークン付きの確認リンク）。
+ * リンクを開くとアカウントが有効化されてログインできるようになる。送信できたら true。
+ */
+async function sendVerifyEmail(
+  resendKey: string | undefined,
+  origin: string,
+  secret: string,
+  email: string,
+): Promise<boolean> {
+  const token = await signVerify(secret, email)
+  const verifyUrl = `${origin}/api/auth/verify?token=${encodeURIComponent(token)}`
+  return sendViaResend(
+    resendKey,
+    email,
+    '【ShiftCraft】メールアドレスの確認',
+    [
+      'ShiftCraft にご登録いただきありがとうございます。',
+      '',
+      '下記のリンクを開くと登録が完了し、ログインできるようになります（有効期限24時間）。',
+      verifyUrl,
+      '',
+      'このメールに心当たりが無い場合は、このメールを破棄してください。登録は完了しません。',
+    ].join('\n'),
+  )
+}
+
+/** 確認リンクの結果をブラウザに返す簡易HTMLページ */
+function htmlPage(title: string, body: string): Response {
+  return new Response(
+    `<!doctype html><html lang="ja"><head><meta charset="utf-8">` +
+      `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+      `<title>${title}</title></head>` +
+      `<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:12vh auto;padding:0 1.5rem;color:#1e293b;line-height:1.7">` +
+      `<h1 style="font-size:1.4rem">${title}</h1><p>${body}</p>` +
+      `<p><a href="/" style="color:#2f59c4">ShiftCraft を開く</a></p></body></html>`,
+    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } },
+  )
 }
 
 function readCookie(request: Request, name: string): string | null {
@@ -275,8 +342,8 @@ async function ensureSchema(db: D1Database): Promise<void> {
          id INTEGER PRIMARY KEY AUTOINCREMENT, json TEXT NOT NULL, saved_at TEXT NOT NULL)`,
     )
     .run()
-  // ユーザー（ID＋パスワード）。複数アカウント可。承認制は廃止したため status は常に 'active'。
-  // status: 'active'=ログイン可（旧スキーマ互換のため列は残す）。email: 連絡先（既定はID=メール）。
+  // ユーザー（ID＋パスワード）。複数アカウント可。
+  // status: 'active'=ログイン可 / 'pending'=メールアドレス未確認。email: 連絡先（既定はID=メール）。
   // plan: 'trial'=お試し（AI累計5回）/ 'active'=月額課金中（AI毎月30回）。
   // ai_used/ai_period: AI利用回数の集計（period は 'trial' か 'YYYY-MM'）。
   await db
@@ -827,6 +894,8 @@ export async function handleApi(
     const user = await getUser(db, username)
     const ok = user ? await verifyPassword(password, user.password_hash) : false
     if (!ok) return json({ error: 'invalid_credentials' }, 401)
+    // メールアドレス未確認（仮登録）のアカウントはログイン不可
+    if (user && user.status === 'pending') return json({ error: 'email_unverified' }, 403)
     const secret = await ensureSessionSecret(db)
     const token = await signSession(secret, username)
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
@@ -836,20 +905,22 @@ export async function handleApi(
     return json({ ok: true }, 200, { 'set-cookie': clearCookie() })
   }
 
-  // ---- 一般ユーザーの新規登録（公開・承認不要。登録後すぐログインできる） ----
+  // ---- 一般ユーザーの新規登録（公開・メールアドレス確認が必要） ----
+  // 登録時点では status='pending'（仮登録）。確認メールのリンクを開くと 'active' になりログイン可能。
   if (path === '/api/auth/signup' && request.method === 'POST') {
     // 初回アカウント（運営者）が未作成なら登録不可（先に /setup が必要）
     if ((await countUsers(db)) === 0) return json({ error: 'not_configured' }, 400)
     const body = await readJson<{ username?: string; password?: string; email?: string }>(request)
+    // メールアドレスをそのままIDとして運用する（username = email）
     const username = normalizeUsername(body?.username)
     const password = (body?.password ?? '').trim()
-    const email = typeof body?.email === 'string' ? body.email.trim().slice(0, 200) : ''
-    if (username.length < 1) return json({ error: 'invalid_username' }, 400)
+    // 確認メールを送るため、メールアドレスの形式を必須にする
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username)) return json({ error: 'invalid_email' }, 400)
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     if (await getUser(db, username)) return json({ error: 'username_taken' }, 409)
 
     const secret = await ensureSessionSecret(db)
-    // 新規登録は 14日間の無料トライアルで開始。承認不要なので即 active。
+    // 新規登録は 14日間の無料トライアルで開始。確認メール後に有効化する。
     const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
     await db
       .prepare(
@@ -859,17 +930,68 @@ export async function handleApi(
         username,
         await hashPassword(password),
         new Date().toISOString(),
-        'active',
-        email || username,
+        'pending',
+        username,
         'trial',
         null,
         trialEndsAt,
       )
       .run()
 
-    // 登録と同時にログイン状態にする（セッションCookieを発行）
-    const token = await signSession(secret, username)
-    return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token) })
+    // 確認メールを送信（送れなくても仮登録は成立。emailed で状況を返す）
+    let emailed = false
+    try {
+      emailed = await sendVerifyEmail(resendKey, url.origin, secret, username)
+    } catch {
+      emailed = false
+    }
+    // ログイン状態にはしない（確認完了まで）
+    return json({ ok: true, emailed })
+  }
+
+  // ---- メールアドレスの確認（メール内リンク。署名トークンで認可） ----
+  if (path === '/api/auth/verify' && request.method === 'GET') {
+    const secret = await getSessionSecret(db)
+    const token = url.searchParams.get('token') ?? ''
+    const username = secret ? await verifyToken(token, secret, 'verify') : null
+    if (!username) {
+      return htmlPage(
+        'リンクが無効です',
+        'リンクの有効期限が切れているか、正しくありません。お手数ですが、ログイン画面から確認メールを再送してください。',
+      )
+    }
+    const user = await getUser(db, username)
+    if (!user) {
+      return htmlPage('リンクが無効です', 'アカウントが見つかりませんでした。')
+    }
+    // 既に確認済みでも同じ完了ページを返す（冪等）
+    await db
+      .prepare("UPDATE users SET status = 'active' WHERE username = ?1 AND status = 'pending'")
+      .bind(username)
+      .run()
+    return htmlPage(
+      'メールアドレスを確認しました',
+      'ご登録ありがとうございます。登録が完了しました。下のリンクからログインしてご利用ください。',
+    )
+  }
+
+  // ---- 確認メールの再送（公開・存在有無は漏らさない） ----
+  if (path === '/api/auth/resend-verification' && request.method === 'POST') {
+    const body = await readJson<{ email?: string }>(request)
+    const email = normalizeUsername(body?.email)
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const user = await getUser(db, email)
+      // 未確認（pending）のアカウントにだけ再送する
+      if (user && user.status === 'pending') {
+        try {
+          const secret = await ensureSessionSecret(db)
+          await sendVerifyEmail(resendKey, url.origin, secret, email)
+        } catch {
+          // 送信失敗でもレスポンスは変えない（列挙を防ぐ）
+        }
+      }
+    }
+    return json({ ok: true })
   }
 
   // ---- パスワード再設定リンクの送信（公開） ----
@@ -914,7 +1036,7 @@ export async function handleApi(
     const password = (body?.password ?? '').trim()
     if (password.length < 4) return json({ error: 'weak_password' }, 400)
     const secret = await getSessionSecret(db)
-    const username = secret ? await verifyReset(token, secret) : null
+    const username = secret ? await verifyToken(token, secret, 'reset') : null
     if (!username) return json({ error: 'invalid_token' }, 400)
     if (!(await getUser(db, username))) return json({ error: 'invalid_token' }, 400)
     await db

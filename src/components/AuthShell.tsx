@@ -9,6 +9,7 @@ import {
   logout as apiLogout,
   pullCloudIntoStore,
   pushCloudIfChanged,
+  resendVerification,
   resetPassword,
   signup,
   setupAccount,
@@ -167,6 +168,8 @@ function AuthCard({
   idPlaceholder = 'ID（ユーザー名）',
   idNoun = 'ID',
   emailAsId,
+  doneMessage,
+  onResend,
 }: {
   title: string
   desc: string
@@ -187,17 +190,25 @@ function AuthCard({
   idNoun?: string
   /** メールアドレスをそのままIDとして使う（email=id で送信し、形式も検証する） */
   emailAsId?: boolean
+  /** 成功時にフォームの代わりに表示する完了メッセージ（入力IDを受け取る） */
+  doneMessage?: (email: string) => React.ReactNode
+  /** 確認メールの再送。指定するとメール未確認時に再送ボタンを出す */
+  onResend?: (email: string) => Promise<{ ok: boolean; error?: string }>
 }) {
   const [id, setId] = useState('')
   const [pw, setPw] = useState('')
   const [pw2, setPw2] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  /** メール未確認エラー（ログイン時）。再送ボタンの出し分けに使う */
+  const [unverified, setUnverified] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => ref.current?.focus(), [])
 
   const submit = async () => {
     setError(null)
+    setUnverified(false)
     if (id.trim().length < 1) {
       setError(`${idNoun}を入力してください。`)
       return
@@ -218,19 +229,39 @@ function AuthCard({
     // メールをIDとして運用するため、email 引数には id と同じ値を渡す
     const res = await onSubmit(id.trim(), pw, id.trim())
     setBusy(false)
-    if (res.ok) return
+    if (res.ok) {
+      if (doneMessage) setDone(true)
+      return
+    }
+    if (res.error === 'email_unverified') setUnverified(true)
     setError(
       res.error === 'invalid_credentials'
         ? `${idNoun}またはパスワードが違います。`
-        : res.error === 'username_taken'
-          ? `その${idNoun}は既に使われています。別の${idNoun}にしてください。`
-          : res.error === 'weak_password'
-            ? 'パスワードは4文字以上にしてください。'
-            : res.error === 'invalid_username'
-              ? `${idNoun}を入力してください。`
-              : res.error === 'not_configured'
-                ? 'まだ利用の準備が整っていないため登録できません。しばらくしてからお試しください。'
-                : 'エラーが発生しました。通信状況を確認してください。',
+        : res.error === 'email_unverified'
+          ? 'メールアドレスの確認が完了していません。登録時にお送りした確認メールのリンクを開いてください。'
+          : res.error === 'username_taken'
+            ? `その${idNoun}は既に使われています。別の${idNoun}にしてください。`
+            : res.error === 'weak_password'
+              ? 'パスワードは4文字以上にしてください。'
+              : res.error === 'invalid_username' || res.error === 'invalid_email'
+                ? '正しいメールアドレスを入力してください。'
+                : res.error === 'not_configured'
+                  ? 'まだ利用の準備が整っていないため登録できません。しばらくしてからお試しください。'
+                  : 'エラーが発生しました。通信状況を確認してください。',
+    )
+  }
+
+  if (done && doneMessage) {
+    return (
+      <CardShell title={title} desc={desc}>
+        <div className="space-y-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-base leading-relaxed text-emerald-800">
+            {doneMessage(id.trim())}
+          </div>
+          {onResend && <ResendMailButton email={id.trim()} onResend={onResend} />}
+          {footer}
+        </div>
+      </CardShell>
     )
   }
 
@@ -268,12 +299,45 @@ function AuthCard({
           />
         )}
         {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+        {unverified && onResend && <ResendMailButton email={id.trim()} onResend={onResend} />}
         <button className="btn-primary w-full text-lg" onClick={submit} disabled={busy}>
           {busy ? '処理中…' : buttonLabel}
         </button>
         {footer}
       </div>
     </CardShell>
+  )
+}
+
+/** 確認メールを再送するボタン（送信後は「送信しました」を表示） */
+function ResendMailButton({
+  email,
+  onResend,
+}: {
+  email: string
+  onResend: (email: string) => Promise<{ ok: boolean; error?: string }>
+}) {
+  const [state, setState] = useState<'idle' | 'busy' | 'sent'>('idle')
+  if (state === 'sent') {
+    return (
+      <p className="text-sm text-emerald-700">
+        確認メールを再送しました。メールをご確認ください。
+      </p>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="text-sm font-semibold text-brand-600 hover:underline disabled:opacity-60"
+      disabled={state === 'busy' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)}
+      onClick={async () => {
+        setState('busy')
+        const res = await onResend(email)
+        setState(res.ok ? 'sent' : 'idle')
+      }}
+    >
+      {state === 'busy' ? '送信中…' : '確認メールを再送する'}
+    </button>
   )
 }
 
@@ -306,6 +370,7 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
         if (res.ok) await onDone()
         return res
       }}
+      onResend={async (email) => resendVerification(email)}
       footer={
         <div className="space-y-2 border-t border-slate-100 pt-4 text-sm leading-relaxed text-slate-500">
           <p>
@@ -313,7 +378,7 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
             <a href="/register" className="font-semibold text-brand-600 hover:underline">
               新規登録
             </a>
-            （メールアドレスとパスワードだけで、すぐにご利用いただけます）
+            （メールアドレスとパスワードで登録し、確認メールのリンクを開くとご利用いただけます）
           </p>
           <p>
             パスワードをお忘れの方は{' '}
@@ -332,21 +397,26 @@ function RegisterScreen() {
   return (
     <AuthCard
       title="新規登録"
-      desc="メールアドレス（これがログインIDになります）とパスワードを入力するだけで登録できます。承認は不要で、登録後すぐにご利用いただけます。"
-      buttonLabel="登録してはじめる"
+      desc="メールアドレス（これがログインIDになります）とパスワードを入力してください。入力したメールアドレス宛に確認メールをお送りします。メール内のリンクを開くと登録が完了し、ログインできるようになります。"
+      buttonLabel="確認メールを送る"
       confirm
       emailAsId
       idType="email"
       idPlaceholder="メールアドレス"
       idNoun="メールアドレス"
-      onSubmit={async (id, pw, email) => {
-        const res = await signup(id, pw, email)
-        // 登録と同時にログイン状態になる → トップへ遷移してアプリを開く
-        if (res.ok && typeof window !== 'undefined') window.location.href = '/'
-        return res
-      }}
+      onSubmit={async (id, pw, email) => signup(id, pw, email)}
+      doneMessage={(email) => (
+        <>
+          確認メールを <span className="font-semibold">{email}</span> に送信しました。
+          メール内のリンクを開くと登録が完了し、ログインできるようになります
+          （リンクの有効期限は24時間です）。
+          <br />
+          メールが届かない場合は、迷惑メールフォルダをご確認のうえ、下のボタンから再送してください。
+        </>
+      )}
+      onResend={async (email) => resendVerification(email)}
       footer={
-        <div className="space-y-3">
+        <div className="space-y-3 border-t border-slate-100 pt-4">
           <p className="text-sm text-slate-500">
             <a href="/" className="font-semibold text-brand-600 hover:underline">
               ← ログイン画面へ戻る

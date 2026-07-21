@@ -6,6 +6,7 @@ import {
   computeEntitlement,
   verifyStripeSignature,
   signReset,
+  signVerify,
   type D1Database,
   type D1PreparedStatement,
 } from './index'
@@ -80,8 +81,13 @@ function fakeDb() {
             if (u) u.password_hash = bound[0] as string
             return
           }
-          if (query.startsWith('UPDATE users SET status') || query.startsWith('DELETE FROM users')) {
-            // 旧・承認/却下の名残（SQL到達時に落ちないように受ける）
+          if (query.startsWith('UPDATE users SET status')) {
+            // メール確認: SET status='active' WHERE username=?1 AND status='pending'
+            const u = users.get(bound[0] as string)
+            if (u && u.status === 'pending') u.status = 'active'
+            return
+          }
+          if (query.startsWith('DELETE FROM users')) {
             return
           }
           throw new Error(`unexpected run(): ${query}`)
@@ -216,7 +222,14 @@ describe('worker 認証（ID＋パスワード）', () => {
   })
 })
 
-describe('worker 新規登録（承認不要）', () => {
+describe('worker 新規登録（メールアドレス確認）', () => {
+  async function sessionSecret(db: D1Database): Promise<string> {
+    const row = await db
+      .prepare('SELECT session_secret FROM auth_meta WHERE id = 1')
+      .first<{ session_secret: string }>()
+    return row!.session_secret
+  }
+
   it('初回アカウント未作成なら登録不可（400）', async () => {
     const db = fakeDb()
     const res = await handleApi(
@@ -226,42 +239,92 @@ describe('worker 新規登録（承認不要）', () => {
     expect(res.status).toBe(400)
   })
 
-  it('登録すると即 active で作成され、その場でセッションが発行される', async () => {
+  it('メール形式でないIDは 400（invalid_email）', async () => {
     const { db } = await authed()
     const res = await handleApi(
-      req('/api/auth/signup', 'POST', {
-        username: 'n@example.com',
-        password: 'abcd',
-        email: 'n@example.com',
-      }),
+      req('/api/auth/signup', 'POST', { username: 'not-an-email', password: 'abcd' }),
+      db,
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'invalid_email' })
+  })
+
+  it('登録すると仮登録（pending）になり、確認前はログインできない（403）', async () => {
+    const { db } = await authed()
+    const res = await handleApi(
+      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
       db,
     )
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true })
-    expect(res.headers.get('set-cookie')).toContain('sc_session=')
+    // 確認メール未送信でも仮登録は成立（Resendキー未設定 → emailed:false）
+    expect(await res.json()).toMatchObject({ ok: true, emailed: false })
+    // 確認前はログイン不可
+    const login = await handleApi(
+      req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'abcd' }),
+      db,
+    )
+    expect(login.status).toBe(403)
+    expect(await login.json()).toMatchObject({ error: 'email_unverified' })
   })
 
-  it('登録後は承認なしですぐログインできる', async () => {
+  it('確認リンクを開くと有効化され、その後ログインできる', async () => {
     const { db } = await authed()
     await handleApi(
       req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
       db,
     )
-    const res = await handleApi(
+    const token = await signVerify(await sessionSecret(db), 'n@example.com')
+    const verify = await handleApi(req(`/api/auth/verify?token=${encodeURIComponent(token)}`, 'GET'), db)
+    expect(verify.status).toBe(200)
+    expect(verify.headers.get('content-type')).toContain('text/html')
+    expect(await verify.text()).toContain('確認しました')
+    // 確認後はログイン可
+    const login = await handleApi(
       req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'abcd' }),
       db,
     )
+    expect(login.status).toBe(200)
+    expect(login.headers.get('set-cookie')).toContain('sc_session=')
+  })
+
+  it('不正な確認トークンはHTMLでエラー表示（200）', async () => {
+    const { db } = await authed()
+    const res = await handleApi(req('/api/auth/verify?token=bogus', 'GET'), db)
     expect(res.status).toBe(200)
-    expect(res.headers.get('set-cookie')).toContain('sc_session=')
+    expect(res.headers.get('content-type')).toContain('text/html')
+    expect(await res.text()).toContain('リンクが無効です')
   })
 
   it('既存IDでの登録は409', async () => {
     const { db } = await authed()
+    await handleApi(
+      req('/api/auth/signup', 'POST', { username: 'dup@example.com', password: 'abcd' }),
+      db,
+    )
     const res = await handleApi(
-      req('/api/auth/signup', 'POST', { username: USER, password: 'abcd' }),
+      req('/api/auth/signup', 'POST', { username: 'dup@example.com', password: 'abcd' }),
       db,
     )
     expect(res.status).toBe(409)
+  })
+
+  it('resend-verification は存在有無に関わらず ok を返す', async () => {
+    const { db } = await authed()
+    await handleApi(
+      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
+      db,
+    )
+    const a = await handleApi(
+      req('/api/auth/resend-verification', 'POST', { email: 'n@example.com' }),
+      db,
+    )
+    expect(a.status).toBe(200)
+    expect(await a.json()).toMatchObject({ ok: true })
+    const b = await handleApi(
+      req('/api/auth/resend-verification', 'POST', { email: 'nobody@example.com' }),
+      db,
+    )
+    expect(b.status).toBe(200)
   })
 })
 
@@ -296,12 +359,9 @@ describe('worker パスワード再設定', () => {
   })
 
   it('有効なトークンでパスワードを再設定でき、新パスワードでログインできる', async () => {
+    // 確認済み（active）の運営者アカウントで再設定を検証する
     const { db } = await authed()
-    await handleApi(
-      req('/api/auth/signup', 'POST', { username: 'n@example.com', password: 'abcd' }),
-      db,
-    )
-    const token = await signReset(await sessionSecret(db), 'n@example.com')
+    const token = await signReset(await sessionSecret(db), USER)
     const res = await handleApi(
       req('/api/auth/reset-password', 'POST', { token, password: 'newpass' }),
       db,
@@ -310,13 +370,13 @@ describe('worker パスワード再設定', () => {
     expect(res.headers.get('set-cookie')).toContain('sc_session=')
     // 旧パスワードは不可
     const old = await handleApi(
-      req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'abcd' }),
+      req('/api/auth/login', 'POST', { username: USER, password: PW }),
       db,
     )
     expect(old.status).toBe(401)
     // 新パスワードは可
     const neu = await handleApi(
-      req('/api/auth/login', 'POST', { username: 'n@example.com', password: 'newpass' }),
+      req('/api/auth/login', 'POST', { username: USER, password: 'newpass' }),
       db,
     )
     expect(neu.status).toBe(200)
