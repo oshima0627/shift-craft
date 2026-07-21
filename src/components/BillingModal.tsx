@@ -80,6 +80,19 @@ export default function BillingModal({ open, onClose, billingConfigured, subscri
             )}
             <p className="text-xs text-slate-400">
               決済は Stripe の安全なページで行われます。いつでも解約できます。
+              お申し込みの前に
+              <a href="/legal" target="_blank" rel="noopener" className="text-brand-600 hover:underline">
+                特定商取引法に基づく表記
+              </a>
+              ・
+              <a href="/terms" target="_blank" rel="noopener" className="text-brand-600 hover:underline">
+                利用規約
+              </a>
+              ・
+              <a href="/privacy" target="_blank" rel="noopener" className="text-brand-600 hover:underline">
+                プライバシーポリシー
+              </a>
+              をご確認ください。
             </p>
           </div>
         ) : (
