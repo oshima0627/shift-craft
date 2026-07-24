@@ -566,12 +566,23 @@ export default function ConstraintsTab() {
               {aiBusy ? '解釈中…' : 'AIで解釈して追加'}
             </button>
             {aiLocked ? (
-              <span className="flex items-center gap-2 text-sm">
-                <span className="font-semibold text-amber-700">🔒 AI解釈は有料プランで</span>
-                <button className="btn-primary btn-sm" onClick={() => setBillingOpen(true)}>
-                  プランを見る
-                </button>
-              </span>
+              ent.backend && !ent.authenticated ? (
+                <span className="flex items-center gap-2 text-sm">
+                  <span className="font-semibold text-amber-700">
+                    🔒 AI解釈はログインすると使えます
+                  </span>
+                  <a className="btn-primary btn-sm" href="/register">
+                    無料で登録
+                  </a>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 text-sm">
+                  <span className="font-semibold text-amber-700">🔒 AI解釈は有料プランで</span>
+                  <button className="btn-primary btn-sm" onClick={() => setBillingOpen(true)}>
+                    プランを見る
+                  </button>
+                </span>
+              )
             ) : (
               aiUsage && (
                 <span

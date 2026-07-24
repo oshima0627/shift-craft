@@ -15,12 +15,36 @@ import {
   setupAccount,
 } from '../utils/cloud'
 
-type Phase = 'loading' | 'setup' | 'login' | 'ready' | 'local'
+type Phase = 'loading' | 'setup' | 'login' | 'ready' | 'local' | 'guest'
+
+// ゲストモード（ログインなしのお試し利用）の選択を記憶するキー。
+// 選ぶと次回以降もログイン画面を挟まずアプリを開く（ログイン成功時に解除）。
+const GUEST_KEY = 'shiftcraft-guest-mode'
+
+function isGuestMode(): boolean {
+  try {
+    return localStorage.getItem(GUEST_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setGuestMode(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(GUEST_KEY, '1')
+    else localStorage.removeItem(GUEST_KEY)
+  } catch {
+    // localStorage 不可の環境では記憶しない（毎回ログイン画面から選び直すだけ）
+  }
+}
 
 /**
  * 認証の入口。バックエンド（Cloudflare Worker + D1）があればログインを要求し、
  * ログイン後は設定をD1と自動同期する。バックエンドが無い（ローカル開発）場合は
  * そのままアプリを表示する（ローカルモード）。
+ * ログインせずに基本機能を使う「お試し（ゲスト）モード」も選べる。
+ * その場合データはこの端末の localStorage にのみ保存され、
+ * クラウド同期・AI解釈・印刷/CSVなどの有料機能はロックされる。
  */
 export default function AuthShell() {
   const [phase, setPhase] = useState<Phase>('loading')
@@ -46,16 +70,30 @@ export default function AuthShell() {
       return
     }
     if (!st.authenticated) {
-      setPhase('login')
+      // 以前「ログインせずに使う」を選んでいたら、ログイン画面を挟まず再開する
+      setPhase(isGuestMode() ? 'guest' : 'login')
       return
     }
     await enterAuthed()
   }
 
   async function enterAuthed() {
+    // ログインに成功したらお試しモードは解除
+    setGuestMode(false)
     // ログイン済み → クラウドの設定を取り込んでからアプリ表示
     await pullCloudIntoStore(getData, (d) => useStore.getState().importData(d))
     setPhase('ready')
+  }
+
+  /** ログインせずに使いはじめる（お試し／ゲストモード） */
+  function startGuest() {
+    setGuestMode(true)
+    if (phase === 'guest') {
+      // 既にゲストで /login を開いている場合はトップへ戻す
+      window.location.href = '/'
+      return
+    }
+    setPhase('guest')
   }
 
   // 法令ページ（公開URL）。認証状態に関わらず、直リンク・ログイン前でも開ける。
@@ -81,8 +119,13 @@ export default function AuthShell() {
   if (phase === 'setup') {
     return <SetupScreen onDone={enterAuthed} />
   }
-  if (phase === 'login') {
-    return <LoginScreen onDone={enterAuthed} />
+  // ゲスト利用中でも /login でログイン画面を開ける（ヘッダーの「ログイン」から）
+  if (phase === 'login' || (phase === 'guest' && path === '/login')) {
+    return <LoginScreen onDone={enterAuthed} onGuest={startGuest} />
+  }
+  // お試し（ゲスト）モード: ログインなしで基本機能を使う。データはこの端末にのみ保存
+  if (phase === 'guest') {
+    return <App guest />
   }
 
   // ready（バックエンドあり＝自動同期）/ local（バックエンドなし）
@@ -357,7 +400,7 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
   )
 }
 
-function LoginScreen({ onDone }: { onDone: () => void }) {
+function LoginScreen({ onDone, onGuest }: { onDone: () => void; onGuest?: () => void }) {
   return (
     <AuthCard
       title="ログイン"
@@ -372,7 +415,21 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
       }}
       onResend={async (email) => resendVerification(email)}
       footer={
-        <div className="space-y-2 border-t border-slate-100 pt-4 text-sm leading-relaxed text-slate-500">
+        <div className="space-y-3 border-t border-slate-100 pt-4 text-sm leading-relaxed text-slate-500">
+          {onGuest && (
+            <button
+              type="button"
+              className="btn-ghost w-full"
+              onClick={onGuest}
+            >
+              ログインせずに使ってみる
+            </button>
+          )}
+          {onGuest && (
+            <p className="text-xs text-slate-400">
+              ログインなしでも基本機能（シフト作成）をお試しいただけます。データはこの端末のブラウザにのみ保存され、クラウド保存・AI解釈・印刷/CSV出力はご利用いただけません。
+            </p>
+          )}
           <p>
             アカウントをお持ちでない方は{' '}
             <a href="/register" className="font-semibold text-brand-600 hover:underline">
