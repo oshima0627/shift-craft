@@ -425,11 +425,6 @@ function LoginScreen({ onDone, onGuest }: { onDone: () => void; onGuest?: () => 
               ログインせずに使ってみる
             </button>
           )}
-          {onGuest && (
-            <p className="text-xs text-slate-400">
-              ログインなしでも基本機能（シフト作成）をお試しいただけます。データはこの端末のブラウザにのみ保存され、クラウド保存・AI解釈・印刷/CSV出力はご利用いただけません。
-            </p>
-          )}
           <p>
             アカウントをお持ちでない方は{' '}
             <a href="/register" className="font-semibold text-brand-600 hover:underline">
