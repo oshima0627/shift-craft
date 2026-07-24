@@ -10,7 +10,14 @@ import {
   setLastSyncedAt,
 } from '../utils/cloud'
 
-export default function DataMenu({ authed = false }: { authed?: boolean }) {
+export default function DataMenu({
+  authed = false,
+  guest = false,
+}: {
+  authed?: boolean
+  /** ログインなしのお試し利用中か（クラウド機能の代わりにログイン案内を出す） */
+  guest?: boolean
+}) {
   const data = useStore((s) => s.data)
   const importData = useStore((s) => s.importData)
   const resetData = useStore((s) => s.resetData)
@@ -128,26 +135,42 @@ export default function DataMenu({ authed = false }: { authed?: boolean }) {
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 z-20 mt-2 w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-slate-200 bg-white py-2 shadow-lg">
-            <button
-              className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100 disabled:opacity-50"
-              onClick={handleCloudSave}
-              disabled={busy}
-            >
-              クラウドに保存
-            </button>
-            <button
-              className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100 disabled:opacity-50"
-              onClick={handleCloudLoad}
-              disabled={busy}
-            >
-              クラウドから読込
-            </button>
-            {getLastSyncedAt() && (
-              <p className="px-4 pb-1 text-xs text-slate-400">
-                最終同期: {formatSyncTime(getLastSyncedAt()!)}
-              </p>
+            {authed && (
+              <>
+                <button
+                  className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100 disabled:opacity-50"
+                  onClick={handleCloudSave}
+                  disabled={busy}
+                >
+                  クラウドに保存
+                </button>
+                <button
+                  className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100 disabled:opacity-50"
+                  onClick={handleCloudLoad}
+                  disabled={busy}
+                >
+                  クラウドから読込
+                </button>
+                {getLastSyncedAt() && (
+                  <p className="px-4 pb-1 text-xs text-slate-400">
+                    最終同期: {formatSyncTime(getLastSyncedAt()!)}
+                  </p>
+                )}
+                <div className="my-1.5 border-t border-slate-100" />
+              </>
             )}
-            <div className="my-1.5 border-t border-slate-100" />
+            {guest && (
+              <>
+                <p className="px-4 py-2.5 text-sm leading-relaxed text-slate-400">
+                  クラウド保存は
+                  <a href="/login" className="font-semibold text-brand-600 hover:underline">
+                    ログイン
+                  </a>
+                  すると使えます。お試し中のデータはこの端末のブラウザにのみ保存されます。
+                </p>
+                <div className="my-1.5 border-t border-slate-100" />
+              </>
+            )}
             <button
               className="block w-full px-4 py-2.5 text-left text-base hover:bg-slate-100"
               onClick={handleExport}

@@ -54,13 +54,23 @@ export default function GenerateTab() {
         <div className="flex flex-wrap items-center gap-2">
           {result &&
             (ent.locked ? (
-              <button
-                className="btn-ghost"
-                onClick={() => setBillingOpen(true)}
-                title="書き出しは有料プランでご利用いただけます"
-              >
-                🔒 印刷・CSV出力（有料）
-              </button>
+              ent.backend && !ent.authenticated ? (
+                <a
+                  className="btn-ghost"
+                  href="/register"
+                  title="印刷・CSV出力は無料登録（ログイン）でご利用いただけます"
+                >
+                  🔒 印刷・CSV出力（要ログイン）
+                </a>
+              ) : (
+                <button
+                  className="btn-ghost"
+                  onClick={() => setBillingOpen(true)}
+                  title="書き出しは有料プランでご利用いただけます"
+                >
+                  🔒 印刷・CSV出力（有料）
+                </button>
+              )
             ) : (
               <>
                 <button className="btn-ghost" onClick={() => window.print()}>

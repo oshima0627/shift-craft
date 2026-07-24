@@ -13,6 +13,27 @@ export default function PlanBanner() {
   const [open, setOpen] = useState(false)
 
   if (ent.loading || !ent.backend) return null
+
+  // 未ログイン（お試し利用中）: ローカル保存のみである旨と登録・ログイン導線を出す
+  if (!ent.authenticated) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm text-brand-800">
+        <span>
+          ログインせずにお試し中です。データは<b>この端末のブラウザにのみ</b>保存されます。
+          無料登録するとクラウド保存・AI解釈・印刷/CSV出力（14日間無料トライアル）が使えます。
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <a href="/register" className="btn-primary btn-sm">
+            無料で新規登録
+          </a>
+          <a href="/login" className="btn-ghost btn-sm">
+            ログイン
+          </a>
+        </span>
+      </div>
+    )
+  }
+
   if (ent.tier === 'active') return null // 加入中/招待は表示不要
 
   const trialing = ent.tier === 'trialing'

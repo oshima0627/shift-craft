@@ -5,6 +5,8 @@ export interface EntitlementState {
   loading: boolean
   /** バックエンドに接続しているか（ローカル開発では false） */
   backend: boolean
+  /** ログイン済みか。未ログイン（お試し利用）では false */
+  authenticated: boolean
   /** 有料機能（AI・書き出し等）がロックされているか。ローカル/未接続時は false（全機能可） */
   locked: boolean
   tier?: Tier
@@ -17,6 +19,7 @@ export interface EntitlementState {
 const INITIAL: EntitlementState = {
   loading: true,
   backend: false,
+  authenticated: false,
   locked: false,
   billingConfigured: false,
 }
@@ -31,14 +34,21 @@ export function useEntitlement(): EntitlementState & { refresh: () => void } {
   const refresh = useCallback(() => {
     void getAuthStatus().then((s) => {
       if (!s.backend) {
-        setState({ loading: false, backend: false, locked: false, billingConfigured: false })
+        setState({
+          loading: false,
+          backend: false,
+          authenticated: false,
+          locked: false,
+          billingConfigured: false,
+        })
         return
       }
       setState({
         loading: false,
         backend: true,
-        // バックエンドがあり、かつ権利なし → ロック
-        locked: s.entitled === false,
+        authenticated: s.authenticated,
+        // バックエンドがあり、未ログイン（お試し利用）または権利なし → 有料機能ロック
+        locked: !s.authenticated || s.entitled === false,
         tier: s.tier,
         trialEndsAt: s.trialEndsAt ?? null,
         billingConfigured: !!s.billingConfigured,

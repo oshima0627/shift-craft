@@ -60,7 +60,10 @@ function tabFromPath(pathname: string): TabId {
   return hit ? hit.id : TABS[0].id
 }
 
-export default function App({ onLogout }: { onLogout?: () => void } = {}) {
+export default function App({
+  onLogout,
+  guest = false,
+}: { onLogout?: () => void; guest?: boolean } = {}) {
   // 画面ごとにURLを持つ（/busyness, /staff, /generate ...）
   const [tab, setTabState] = useState<TabId>(() => tabFromPath(window.location.pathname))
 
@@ -102,7 +105,12 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
                 ログアウト
               </button>
             )}
-            <DataMenu authed={!!onLogout} />
+            {guest && (
+              <a href="/login" className="btn-ghost btn-sm">
+                ログイン
+              </a>
+            )}
+            <DataMenu authed={!!onLogout} guest={guest} />
           </div>
         </div>
 
